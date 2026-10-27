@@ -83,13 +83,13 @@ py server.py
 ```mermaid
 sequenceDiagram
     autonumber
-    actor PC as Υπολογιστής (Client)
-    participant DHCP as DHCP Server (Python)
+    actor Client as Υπολογιστής (Client)
+    participant Server as DHCP Server (Python)
 
-    PC->>DHCP: 1. DHCPDISCOVER (Broadcast UDP 68 -> 67)<br/>"Υπάρχει κάποιος DHCP Server; Χρειάζομαι IP!"
-    DHCP->>PC: 2. DHCPOFFER (UDP 67 -> 68)<br/>"Σου προτείνω την IP 192.168.1.100, Gateway 192.168.1.1"
-    PC->>DHCP: 3. DHCPREQUEST (Broadcast)<br/>"Αποδέχομαι την IP 192.168.1.100!"
-    DHCP->>PC: 4. DHCPACK (Acknowledge)<br/>"Κατοχυρώθηκε στη βάση SQLite! Μπορείς να τη χρησιμοποιήσεις."
+    Client->>Server: 1. DHCPDISCOVER - Broadcast αναζήτηση DHCP Server
+    Server->>Client: 2. DHCPOFFER - Πρόταση IP 192.168.1.100 και Gateway
+    Client->>Server: 3. DHCPREQUEST - Αίτημα αποδοχής IP 192.168.1.100
+    Server->>Client: 4. DHCPACK - Επιβεβαίωση και αποθήκευση στο SQLite
 ```
 
 ---
