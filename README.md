@@ -12,6 +12,14 @@
 
 ---
 
+<p align="center">
+  <a href="https://karidasd.github.io/dhcp-network-manager/">
+    <img src="dashboard-preview.png" alt="DHCP Server & Network IP Manager Dashboard" width="100%" style="border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+  </a>
+</p>
+
+---
+
 ## 🚀 Πώς να το ξεκινήσετε Τοπικά (Quick Start)
 
 ### Τρόπος 1: Με διπλό κλικ (Windows)
@@ -95,6 +103,7 @@ DHCP_Server/
 │   └── workflows/
 │       └── test.yml         <- GitHub Actions CI Pipeline
 │
+├── dashboard-preview.png    <- Screenshot προεπισκόπησης Dashboard
 ├── index.html               <- Live GitHub Pages Dashboard
 ├── start.bat                <- Εκκινητής Windows (Double-click)
 ├── server.py                <- HTTP API Server & Web Controller
