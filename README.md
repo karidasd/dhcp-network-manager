@@ -1,5 +1,6 @@
 # 🌐 DHCP Server & Network IP Manager
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-GitHub%20Pages-brightgreen?logo=github)](https://karidasd.github.io/dhcp-network-manager/)
 [![Tests](https://github.com/karidasd/dhcp-network-manager/actions/workflows/test.yml/badge.svg)](https://github.com/karidasd/dhcp-network-manager/actions/workflows/test.yml)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/)
 [![Database](https://img.shields.io/badge/Database-SQLite%203-003B57.svg)](https://www.sqlite.org/)
@@ -7,9 +8,11 @@
 
 Ένα πλήρες, σύγχρονο σύστημα αυτόματης απόδοσης και διαχείρισης διευθύνσεων IP (**DHCP Server**) για υπολογιστές και συσκευές τοπικού δικτύου (LAN), γραμμένο σε **Python** με **SQLite Persistence**, **Ping Online Monitoring**, **Rogue Device Security Detection** και **Διαδραστικό Οπτικό Χάρτη Τοπολογίας (Topology Map)**.
 
+👉 **Δοκιμάστε το άμεσα Online (Live Demo):** **[https://karidasd.github.io/dhcp-network-manager/](https://karidasd.github.io/dhcp-network-manager/)**
+
 ---
 
-## 🚀 Πώς να το ξεκινήσετε (Quick Start)
+## 🚀 Πώς να το ξεκινήσετε Τοπικά (Quick Start)
 
 ### Τρόπος 1: Με διπλό κλικ (Windows)
 Κάντε διπλό κλικ στο αρχείο **`start.bat`**.
@@ -29,36 +32,40 @@ py server.py
 
 ## 🎯 Δυνατότητες & Χαρακτηριστικά
 
-### 1. ⚡ Αυτόματη Απόδοση IP (DHCP Protocol)
+### 1. 🌐 Dual-Mode Λειτουργία (Online & Local)
+- **Online στο GitHub Pages:** Λειτουργεί αυτόνομα με in-browser client-side simulator engine, επιτρέποντας σε οποιονδήποτε να δοκιμάσει το DORA, την απόδοση IP, τον χάρτη τοπολογίας και τις εξαγωγές απευθείας στον browser.
+- **Τοπικά με Python & SQLite:** Συνδέεται με τον τοπικό DHCP daemon, αποθηκεύει τα πάντα στη βάση `dhcp_leases.db` και επιτρέπει broadcast UDP 67 network listening.
+
+### 2. ⚡ Αυτόματη Απόδοση IP (DHCP Protocol)
 - Πλήρης υλοποίηση του κύκλου **DORA** (**D**iscover ➔ **O**ffer ➔ **R**equest ➔ **A**cknowledge).
 - Αυτόματος έλεγχος διαθεσιμότητας και αποφυγή διπλότυπων IP διευθύνσεων.
 - Παρακολούθηση διάρκειας μίσθωσης (Lease Duration) και αυτόματη λήξη/ανανέωση.
 
-### 2. 💾 Μόνιμη Αποθήκευση Δεδομένων (SQLite Persistence)
+### 3. 💾 Μόνιμη Αποθήκευση Δεδομένων (SQLite Persistence)
 - Όλες οι ενεργές μισθώσεις, οι στατικές κρατήσεις και οι ρυθμίσεις δικτύου αποθηκεύονται αυτόματα στην τοπική βάση **`dhcp_leases.db`**.
 - Ακόμα και αν κλείσει ο server, τα δεδομένα παραμένουν ασφαλή και ανακτώνται κατά την επανεκκίνηση.
 
-### 3. 🗺️ Διαδραστικός Οπτικός Χάρτης Δικτύου (Live Topology Map)
+### 4. 🗺️ Διαδραστικός Οπτικός Χάρτης Δικτύου (Live Topology Map)
 - Dynamic HTML5 Canvas rendering της τοπολογίας του τοπικού δικτύου.
 - Κεντρικός κόμβος (DHCP Gateway) συνδεδεμένος με όλες τις ενεργές συσκευές σε πραγματικό χρόνο.
 - Οπτική ένδειξη κατάστασης σύνδεσης και IP.
 
-### 4. 🟢 Ζωντανός Έλεγχος Συσκευών (Ping / Online Health Probe)
+### 5. 🟢 Ζωντανός Έλεγχος Συσκευών (Ping / Online Health Probe)
 - Αυτόματο background scanning μέσω ICMP Ping.
 - Ένδειξη **Online (πράσινο)** / **Offline (γκρι)** για κάθε συνδεδεμένη συσκευή.
 
-### 5. 🛡️ Ασφάλεια & Ειδοποιήσεις (Rogue Device & Threshold Alerts)
+### 6. 🛡️ Ασφάλεια & Ειδοποιήσεις (Rogue Device & Threshold Alerts)
 - **Rogue Device Detection:** Εντοπίζει και ειδοποιεί άμεσα στο UI όταν μια άγνωστη MAC address εμφανιστεί στο δίκτυο.
 - **Pool Exhaustion Warning:** Προειδοποίηση όταν η χρήση του εύρους IP ξεπεράσει το 85%.
 
-### 6. 📊 Εξαγωγή Αναφορών (Export CSV & JSON)
+### 7. 📊 Εξαγωγή Αναφορών (Export CSV & JSON)
 - Άμεση εξαγωγή όλων των leases και των συσκευών σε αρχείο Excel/CSV (`/api/export/csv`).
 - Πλήρες JSON backup API (`/api/export/json`).
 
-### 7. 🔒 Στατικές Δεσμεύσεις (Static Reservations / IP Binding)
+### 8. 🔒 Στατικές Δεσμεύσεις (Static Reservations / IP Binding)
 - Δέσμευση συγκεκριμένης IP για συγκεκριμένη MAC διεύθυνση (π.χ. Server, NAS, Εκτυπωτής).
 
-### 8. 📡 Πραγματικό Δίκτυο (UDP Port 67)
+### 9. 📡 Πραγματικό Δίκτυο (UDP Port 67)
 - Περιλαμβάνει UDP socket listener για πραγματικά broadcast πακέτα DHCP (RFC 2131) όταν εκτελείται με δικαιώματα διαχειριστή.
 
 ---
@@ -88,6 +95,7 @@ DHCP_Server/
 │   └── workflows/
 │       └── test.yml         <- GitHub Actions CI Pipeline
 │
+├── index.html               <- Live GitHub Pages Dashboard
 ├── start.bat                <- Εκκινητής Windows (Double-click)
 ├── server.py                <- HTTP API Server & Web Controller
 ├── dhcp_engine.py           <- Κύριος πυρήνας διανομής IP & DORA engine
@@ -97,5 +105,5 @@ DHCP_Server/
 ├── .gitignore               <- Εξαιρέσεις Git (db, pycache κ.α.)
 │
 └── web/
-    └── index.html           <- Responsive Web Dashboard & Topology Map
+    └── index.html           <- Τοπικό Web Dashboard
 ```

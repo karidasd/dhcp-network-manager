@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DHCP Server & Network IP Manager</title>
+  <title>DHCP Server & Network IP Manager | Live Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -103,6 +103,12 @@
       border: 1px solid rgba(16, 185, 129, 0.3);
     }
 
+    .status-badge.demo-mode {
+      background: rgba(59, 130, 246, 0.15);
+      color: #60a5fa;
+      border-color: rgba(59, 130, 246, 0.3);
+    }
+
     .status-dot {
       width: 8px;
       height: 8px;
@@ -110,6 +116,10 @@
       background: #10b981;
       box-shadow: 0 0 10px #10b981;
       animation: pulse 2s infinite;
+    }
+    .status-dot.blue {
+      background: #3b82f6;
+      box-shadow: 0 0 10px #3b82f6;
     }
 
     @keyframes pulse {
@@ -138,6 +148,11 @@
     .alert-banner.warning {
       background: rgba(245, 158, 11, 0.12);
       border-color: rgba(245, 158, 11, 0.35);
+    }
+
+    .alert-banner.info {
+      background: rgba(59, 130, 246, 0.12);
+      border-color: rgba(59, 130, 246, 0.35);
     }
 
     .alert-content strong {
@@ -508,7 +523,6 @@
       font-size: 0.82rem;
     }
 
-    /* Toast */
     #toast {
       position: fixed;
       bottom: 20px;
@@ -541,11 +555,11 @@
         </div>
       </div>
       <div class="header-actions">
-        <a href="/api/export/csv" class="btn btn-secondary" title="Εξαγωγή σε αρχείο CSV">📥 Export CSV</a>
-        <a href="/api/export/json" target="_blank" class="btn btn-secondary" title="Εξαγωγή JSON Backup">📄 JSON</a>
-        <div class="status-badge">
-          <div class="status-dot"></div>
-          <span>DHCP Active</span>
+        <button class="btn btn-secondary" onclick="exportCSV()" title="Εξαγωγή σε αρχείο CSV">📥 Export CSV</button>
+        <button class="btn btn-secondary" onclick="exportJSON()" title="Εξαγωγή JSON Backup">📄 JSON</button>
+        <div class="status-badge" id="app-status-badge">
+          <div class="status-dot" id="app-status-dot"></div>
+          <span id="app-status-text">Ελέγχεται...</span>
         </div>
         <button class="btn btn-secondary" onclick="fetchStatus()">🔄</button>
       </div>
@@ -660,7 +674,7 @@
                 </tr>
               </thead>
               <tbody id="leases-table-body">
-                <tr><td colspan="7" class="empty-state">Δεν υπάρχουν ενεργές μισθώσεις ακόμη.</td></tr>
+                <tr><td colspan="7" class="empty-state">Δεν υπάρχουν ενεργές μισθώσεις ακόμη. Κάντε προσομοίωση παραπάνω.</td></tr>
               </tbody>
             </table>
           </div>
@@ -707,7 +721,7 @@
         <!-- Config -->
         <div class="card">
           <div class="card-title">
-            <span>⚙️ Ρυθμίσεις Δικτύου DHCP (SQLite)</span>
+            <span>⚙️ Ρυθμίσεις Δικτύου DHCP</span>
           </div>
           <form id="config-form" onsubmit="saveConfig(event)">
             <div class="form-grid">
@@ -749,7 +763,7 @@
             </div>
 
             <button type="submit" class="btn" style="width: 100%; margin-top: 0.4rem; justify-content: center;">
-              💾 Αποθήκευση Ρυθμίσεων (SQLite)
+              💾 Αποθήκευση Ρυθμίσεων
             </button>
           </form>
         </div>
@@ -760,7 +774,7 @@
             <span>📡 Πραγματικό Δίκτυο (UDP Port 67)</span>
           </div>
           <p style="font-size: 0.76rem; color: var(--text-muted); margin-bottom: 0.65rem;">
-            Ακρόαση σε πραγματικά πακέτα DHCP φυσικού δικτύου (απαιτεί Admin).
+            Ακρόαση σε πραγματικά πακέτα DHCP φυσικού δικτύου (απαιτεί Admin στο τοπικό περιβάλλον).
           </p>
           <div style="display: flex; align-items: center; justify-content: space-between; background: #1f2937; padding: 0.55rem 0.75rem; border-radius: 8px;">
             <span style="font-size: 0.8rem; font-weight: 600;" id="real-dhcp-status-text">Ανενεργό</span>
@@ -787,8 +801,161 @@
   <div id="toast">Μήνυμα ειδοποίησης</div>
 
   <script>
-    let currentData = { leases: [], reservations: [], config: {} };
+    // Dual Mode: Check if Python backend is available, else run In-Browser Demo Engine
+    let isLiveBackend = false;
+    let localEngine = null;
+    let currentData = { leases: [], reservations: [], config: {}, alerts: [], logs: [] };
     let realDhcpRunning = false;
+
+    // --- In-Browser Client-Side DHCP Engine (for GitHub Pages Demo) ---
+    class InBrowserDHCPEngine {
+      constructor() {
+        this.config = JSON.parse(localStorage.getItem('dhcp_demo_config')) || {
+          start_ip: "192.168.1.100",
+          end_ip: "192.168.1.150",
+          subnet_mask: "255.255.255.0",
+          gateway: "192.168.1.1",
+          dns_servers: ["8.8.8.8", "1.1.1.1"],
+          domain_name: "lan.local",
+          lease_duration_seconds: 3600
+        };
+
+        this.reservations = JSON.parse(localStorage.getItem('dhcp_demo_reservations')) || [
+          { mac: "00:1A:2B:3C:4D:5E", ip: "192.168.1.99", hostname: "Server-NAS", note: "File Server Storage" }
+        ];
+
+        this.leases = JSON.parse(localStorage.getItem('dhcp_demo_leases')) || [
+          { hostname: "Laptop-CEO", ip: "192.168.1.100", mac: "02:44:88:AA:BB:11", remaining_seconds: 3200, is_static: false, is_online: true, issued_at: "2026-10-27 11:00:00", expires_at: "2026-10-27 12:00:00" },
+          { hostname: "Workstation-Dev", ip: "192.168.1.101", mac: "02:77:99:CC:DD:22", remaining_seconds: 2850, is_static: false, is_online: true, issued_at: "2026-10-27 11:05:00", expires_at: "2026-10-27 12:05:00" },
+          { hostname: "Printer-HP-Laser", ip: "192.168.1.99", mac: "00:1A:2B:3C:4D:5E", remaining_seconds: -1, is_static: true, is_online: true, issued_at: "2026-10-27 10:00:00", expires_at: "Never (Static)" }
+        ];
+
+        this.alerts = [
+          { id: "1", type: "info", title: "🌐 Online GitHub Pages Demo", description: "Εκτελείται σε λειτουργία Client-Side Simulation. Όλες οι ενέργειες αποθηκεύονται στο τοπικό σας browser (localStorage)!" }
+        ];
+
+        this.logs = [
+          { timestamp: "11:05:00", level: "ACK", message: "DHCPACK IP 192.168.1.101 assigned to 02:77:99:CC:DD:22 (Workstation-Dev)" },
+          { timestamp: "11:00:00", level: "ACK", message: "DHCPACK IP 192.168.1.100 assigned to 02:44:88:AA:BB:11 (Laptop-CEO)" },
+          { timestamp: "10:55:00", level: "SYSTEM", message: "DHCP Engine client-side simulator initialized." }
+        ];
+
+        // Periodic simulated ping scanner
+        setInterval(() => {
+          this.leases.forEach(l => {
+            if (!l.is_static && Math.random() < 0.15) {
+              l.is_online = !l.is_online;
+            }
+          });
+        }, 12000);
+      }
+
+      save() {
+        localStorage.setItem('dhcp_demo_config', JSON.stringify(this.config));
+        localStorage.setItem('dhcp_demo_reservations', JSON.stringify(this.reservations));
+        localStorage.setItem('dhcp_demo_leases', JSON.stringify(this.leases));
+      }
+
+      getStatus() {
+        const total = 51;
+        const active = this.leases.length;
+        return {
+          config: this.config,
+          stats: {
+            total_pool_ips: total,
+            active_leases: active,
+            available_ips: Math.max(0, total - active),
+            reserved_ips: this.reservations.length,
+            online_devices: this.leases.filter(l => l.is_online).length,
+            utilization_percent: Math.round((active / total) * 100)
+          },
+          leases: this.leases,
+          reservations: this.reservations,
+          alerts: this.alerts,
+          logs: this.logs,
+          real_socket_running: false,
+          real_socket_error: null
+        };
+      }
+
+      requestIP(hostname, mac) {
+        mac = mac.toUpperCase();
+        // Check static reservation
+        const res = this.reservations.find(r => r.mac === mac);
+        let assignedIp = res ? res.ip : null;
+
+        if (!assignedIp) {
+          const usedIps = new Set(this.leases.map(l => l.ip));
+          for (let i = 100; i <= 150; i++) {
+            const candidate = `192.168.1.${i}`;
+            if (!usedIps.has(candidate)) {
+              assignedIp = candidate;
+              break;
+            }
+          }
+        }
+
+        if (!assignedIp) throw new Error("IP pool exhausted");
+
+        const existingIdx = this.leases.findIndex(l => l.mac === mac);
+        const leaseObj = {
+          hostname: hostname || "PC-Sim",
+          ip: assignedIp,
+          mac: mac,
+          remaining_seconds: this.config.lease_duration_seconds,
+          is_static: Boolean(res),
+          is_online: true,
+          issued_at: new Date().toLocaleTimeString(),
+          expires_at: res ? "Never (Static)" : new Date(Date.now() + 3600000).toLocaleTimeString()
+        };
+
+        if (existingIdx >= 0) {
+          this.leases[existingIdx] = leaseObj;
+        } else {
+          this.leases.push(leaseObj);
+        }
+
+        this.logs.unshift({
+          timestamp: new Date().toLocaleTimeString(),
+          level: "ACK",
+          message: `DHCPACK IP ${assignedIp} assigned to ${mac} (${hostname})`
+        });
+
+        // Rogue device alert simulation
+        if (Math.random() < 0.4) {
+          this.alerts.unshift({
+            id: Date.now().toString(),
+            type: "warning",
+            title: "🚨 Νέα Συσκευή στο Δίκτυο",
+            description: `Συνδέθηκε άγνωστη συσκευή με MAC: ${mac} (${hostname})`
+          });
+        }
+
+        this.save();
+        return leaseObj;
+      }
+
+      releaseIP(mac) {
+        this.leases = this.leases.filter(l => l.mac !== mac.toUpperCase());
+        this.save();
+      }
+
+      addReservation(mac, ip, hostname, note) {
+        this.reservations.push({ mac: mac.toUpperCase(), ip, hostname, note });
+        this.save();
+      }
+
+      removeReservation(mac) {
+        this.reservations = this.reservations.filter(r => r.mac !== mac.toUpperCase());
+        this.save();
+      }
+
+      clearAlerts() {
+        this.alerts = [];
+      }
+    }
+
+    localEngine = new InBrowserDHCPEngine();
 
     function showToast(msg, isError = false) {
       const toast = document.getElementById('toast');
@@ -816,20 +983,44 @@
 
     async function fetchStatus() {
       try {
-        const res = await fetch('/api/status');
+        const res = await fetch('/api/status', { signal: AbortSignal.timeout(1800) });
+        if (!res.ok) throw new Error("API not OK");
         const data = await res.json();
+        isLiveBackend = true;
         currentData = data;
+        updateStatusBadge(true);
         renderDashboard(data);
         drawTopologyMap(data);
       } catch (err) {
-        console.error("Error fetching status:", err);
+        // Fallback to client-side simulator
+        isLiveBackend = false;
+        updateStatusBadge(false);
+        const data = localEngine.getStatus();
+        currentData = data;
+        renderDashboard(data);
+        drawTopologyMap(data);
+      }
+    }
+
+    function updateStatusBadge(live) {
+      const badge = document.getElementById('app-status-badge');
+      const dot = document.getElementById('app-status-dot');
+      const text = document.getElementById('app-status-text');
+
+      if (live) {
+        badge.className = 'status-badge';
+        dot.className = 'status-dot';
+        text.innerText = 'Python Server Online';
+      } else {
+        badge.className = 'status-badge demo-mode';
+        dot.className = 'status-dot blue';
+        text.innerText = 'Online Demo Simulator';
       }
     }
 
     function renderDashboard(data) {
       const stats = data.stats;
 
-      // Stats
       document.getElementById('stat-total').innerText = stats.total_pool_ips;
       document.getElementById('stat-range').innerText = `${data.config.start_ip} - ${data.config.end_ip}`;
       document.getElementById('stat-leased').innerText = stats.active_leases;
@@ -837,15 +1028,12 @@
       document.getElementById('stat-avail').innerText = stats.available_ips;
       document.getElementById('stat-reserved').innerText = stats.reserved_ips;
 
-      // Utilization bar
       const pct = stats.utilization_percent;
       document.getElementById('pool-pct-label').innerText = `${pct}% (${stats.active_leases} από ${stats.total_pool_ips} IPs)`;
       document.getElementById('pool-pct-fill').style.width = `${pct}%`;
 
-      // Security Alerts
       renderAlerts(data.alerts || []);
 
-      // Config form fields (if not focused)
       if (document.activeElement.tagName !== 'INPUT') {
         document.getElementById('cfg-start-ip').value = data.config.start_ip;
         document.getElementById('cfg-end-ip').value = data.config.end_ip;
@@ -856,7 +1044,6 @@
         document.getElementById('cfg-domain').value = data.config.domain_name;
       }
 
-      // Leases Table
       const leasesTbody = document.getElementById('leases-table-body');
       document.getElementById('lease-count-badge').innerText = `${data.leases.length} συσκευές`;
 
@@ -881,7 +1068,6 @@
         `).join('');
       }
 
-      // Reservations Table
       const resTbody = document.getElementById('reservations-table-body');
       if (!data.reservations || data.reservations.length === 0) {
         resTbody.innerHTML = `<tr><td colspan="5" class="empty-state">Δεν υπάρχουν στατικές δεσμεύσεις.</td></tr>`;
@@ -899,10 +1085,8 @@
         `).join('');
       }
 
-      // Logs
       renderLogs(data.logs);
 
-      // Real DHCP
       realDhcpRunning = data.real_socket_running;
       const statusText = document.getElementById('real-dhcp-status-text');
       const realBtn = document.getElementById('real-dhcp-btn');
@@ -934,7 +1118,7 @@
       }
 
       container.innerHTML = alerts.map(a => `
-        <div class="alert-banner ${a.type === 'danger' ? '' : 'warning'}">
+        <div class="alert-banner ${a.type === 'danger' ? '' : (a.type === 'info' ? 'info' : 'warning')}">
           <div class="alert-content">
             <strong>${escapeHtml(a.title)}</strong>
             <p>${escapeHtml(a.description)}</p>
@@ -945,10 +1129,12 @@
     }
 
     async function clearAlerts() {
-      try {
-        await fetch('/api/alerts/clear', { method: 'POST' });
-        fetchStatus();
-      } catch (err) {}
+      if (isLiveBackend) {
+        try { await fetch('/api/alerts/clear', { method: 'POST' }); } catch (err) {}
+      } else {
+        localEngine.clearAlerts();
+      }
+      fetchStatus();
     }
 
     function renderLogs(logs) {
@@ -974,6 +1160,7 @@
     // --- Interactive Topology Map Renderer ---
     function drawTopologyMap(data) {
       const canvas = document.getElementById('topology-canvas');
+      if (!canvas) return;
       const ctx = canvas.getContext('2d');
       const rect = canvas.parentElement.getBoundingClientRect();
       
@@ -988,7 +1175,6 @@
 
       ctx.clearRect(0, 0, w, h);
 
-      // Background subtle grid
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
       ctx.lineWidth = 1;
       for (let x = 0; x < w; x += 30) {
@@ -1000,16 +1186,13 @@
 
       const devices = data.leases || [];
       const numDevices = devices.length;
-
-      // Draw Orbit / Connection Links
       const radius = Math.min(centerX, centerY) * 0.72;
 
       devices.forEach((dev, index) => {
-        const angle = (index / numDevices) * (Math.PI * 2) - Math.PI / 2;
+        const angle = (index / Math.max(1, numDevices)) * (Math.PI * 2) - Math.PI / 2;
         const x = centerX + Math.cos(angle) * radius;
         const y = centerY + Math.sin(angle) * radius;
 
-        // Animated connection line
         ctx.beginPath();
         ctx.moveTo(centerX, centerY);
         ctx.lineTo(x, y);
@@ -1019,7 +1202,6 @@
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // Device node circle
         ctx.beginPath();
         ctx.arc(x, y, 16, 0, Math.PI * 2);
         ctx.fillStyle = dev.is_online ? '#064e3b' : '#1e293b';
@@ -1028,7 +1210,6 @@
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        // Device icon/label
         ctx.fillStyle = '#ffffff';
         ctx.font = '10px JetBrains Mono';
         ctx.textAlign = 'center';
@@ -1036,14 +1217,13 @@
         ctx.fillStyle = '#9ca3af';
         ctx.fillText(dev.ip, x, y + 37);
 
-        // Ping dot
         ctx.beginPath();
         ctx.arc(x + 12, y - 10, 4, 0, Math.PI * 2);
         ctx.fillStyle = dev.is_online ? '#10b981' : '#6b7280';
         ctx.fill();
       });
 
-      // Center: Gateway / DHCP Router Node
+      // Gateway Node
       ctx.beginPath();
       ctx.arc(centerX, centerY, 32, 0, Math.PI * 2);
       ctx.fillStyle = '#1e3a8a';
@@ -1055,7 +1235,6 @@
       ctx.stroke();
       ctx.shadowBlur = 0;
 
-      // Router Label
       ctx.fillStyle = '#ffffff';
       ctx.font = 'bold 12px Plus Jakarta Sans';
       ctx.textAlign = 'center';
@@ -1080,24 +1259,31 @@
       highlightDoraStep('step-request');
 
       try {
-        const res = await fetch('/api/simulate/request', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ hostname, mac })
-        });
-        const data = await res.json();
-        
-        await delay(200);
-        highlightDoraStep('step-ack');
-
-        if (res.ok) {
-          showToast(`✅ Επιτυχία! Αποδόθηκε η IP ${data.lease.ip} στο ${hostname}`);
-          fetchStatus();
+        if (isLiveBackend) {
+          const res = await fetch('/api/simulate/request', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hostname, mac })
+          });
+          const data = await res.json();
+          await delay(200);
+          highlightDoraStep('step-ack');
+          if (res.ok) {
+            showToast(`✅ Επιτυχία! Αποδόθηκε η IP ${data.lease.ip} στο ${hostname}`);
+            fetchStatus();
+          } else {
+            showToast(`❌ Σφάλμα: ${data.message || 'Αποτυχία απόδοσης IP'}`, true);
+          }
         } else {
-          showToast(`❌ Σφάλμα: ${data.message || 'Αποτυχία απόδοσης IP'}`, true);
+          // Client-side execution
+          await delay(200);
+          highlightDoraStep('step-ack');
+          const lease = localEngine.requestIP(hostname, mac);
+          showToast(`✅ Επιτυχία! Αποδόθηκε η IP ${lease.ip} στο ${hostname}`);
+          fetchStatus();
         }
       } catch (err) {
-        showToast('Σφάλμα σύνδεσης με τον server', true);
+        showToast('Σφάλμα: ' + err.message, true);
       } finally {
         setTimeout(resetDoraSteps, 2000);
       }
@@ -1116,11 +1302,15 @@
     async function revokeLease(mac) {
       if (!confirm(`Θέλετε να ανακαλέσετε τη μίσθωση για τη MAC: ${mac};`)) return;
       try {
-        await fetch('/api/leases/revoke', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mac })
-        });
+        if (isLiveBackend) {
+          await fetch('/api/leases/revoke', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mac })
+          });
+        } else {
+          localEngine.releaseIP(mac);
+        }
         showToast('Η IP απελευθερώθηκε!');
         fetchStatus();
       } catch (err) {
@@ -1140,35 +1330,40 @@
       }
 
       try {
-        const res = await fetch('/api/reservations/add', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mac, ip, hostname, note })
-        });
-        const data = await res.json();
-        if (res.ok) {
-          showToast(`Στατική δέσμευση αποθηκεύτηκε: ${ip}`);
-          document.getElementById('res-mac').value = '';
-          document.getElementById('res-ip').value = '';
-          document.getElementById('res-name').value = '';
-          document.getElementById('res-note').value = '';
-          fetchStatus();
+        if (isLiveBackend) {
+          const res = await fetch('/api/reservations/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mac, ip, hostname, note })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.message);
         } else {
-          showToast(data.message || 'Σφάλμα', true);
+          localEngine.addReservation(mac, ip, hostname, note);
         }
+        showToast(`Στατική δέσμευση αποθηκεύτηκε: ${ip}`);
+        document.getElementById('res-mac').value = '';
+        document.getElementById('res-ip').value = '';
+        document.getElementById('res-name').value = '';
+        document.getElementById('res-note').value = '';
+        fetchStatus();
       } catch (err) {
-        showToast('Σφάλμα κατά την προσθήκη', true);
+        showToast('Σφάλμα: ' + err.message, true);
       }
     }
 
     async function removeReservation(mac) {
       if (!confirm(`Διαγραφή στατικής δέσμευσης για ${mac};`)) return;
       try {
-        await fetch('/api/reservations/remove', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mac })
-        });
+        if (isLiveBackend) {
+          await fetch('/api/reservations/remove', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mac })
+          });
+        } else {
+          localEngine.removeReservation(mac);
+        }
         showToast('Η δέσμευση διαγράφηκε');
         fetchStatus();
       } catch (err) {
@@ -1189,12 +1384,17 @@
       };
 
       try {
-        await fetch('/api/config', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        showToast('Οι ρυθμίσεις αποθηκεύτηκαν στο SQLite!');
+        if (isLiveBackend) {
+          await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+        } else {
+          localEngine.config = { ...localEngine.config, ...payload };
+          localEngine.save();
+        }
+        showToast('Οι ρυθμίσεις αποθηκεύτηκαν!');
         fetchStatus();
       } catch (err) {
         showToast('Σφάλμα αποθήκευσης ρυθμίσεων', true);
@@ -1202,6 +1402,10 @@
     }
 
     async function toggleRealDhcp() {
+      if (!isLiveBackend) {
+        showToast('Η λειτουργία πραγματικού socket UDP 67 απαιτεί τοπική εκτέλεση (py server.py) ως Administrator!', true);
+        return;
+      }
       const action = realDhcpRunning ? 'stop' : 'start';
       try {
         const res = await fetch('/api/toggle-real-dhcp', {
@@ -1214,6 +1418,40 @@
       } catch (err) {
         showToast('Σφάλμα UDP listener', true);
       }
+    }
+
+    function exportCSV() {
+      if (isLiveBackend) {
+        window.location.href = '/api/export/csv';
+      } else {
+        // Client-side CSV generation
+        let csv = "Hostname,IP Address,MAC Address,Type,Status,Issued At,Expires At\r\n";
+        currentData.leases.forEach(l => {
+          csv += `"${l.hostname}","${l.ip}","${l.mac}","${l.is_static ? 'Static' : 'Dynamic'}","${l.is_online ? 'Online' : 'Offline'}","${l.issued_at}","${l.expires_at}"\r\n`;
+        });
+        downloadBlob(csv, "dhcp_leases_report.csv", "text/csv;charset=utf-8;");
+      }
+    }
+
+    function exportJSON() {
+      if (isLiveBackend) {
+        window.open('/api/export/json', '_blank');
+      } else {
+        const json = JSON.stringify(currentData, null, 2);
+        downloadBlob(json, "dhcp_backup.json", "application/json");
+      }
+    }
+
+    function downloadBlob(content, filename, contentType) {
+      const blob = new Blob(["\uFEFF" + content], { type: contentType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     }
 
     function formatSeconds(secs) {
