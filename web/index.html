@@ -1,0 +1,1072 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DHCP Server & Network IP Manager</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card-bg: #111827;
+      --card-border: #1f2937;
+      --card-hover: #1e293b;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --accent: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --text-main: #f9fafb;
+      --text-muted: #9ca3af;
+      --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 1.5rem;
+    }
+
+    /* Container */
+    .container {
+      max-width: 1300px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    /* Header */
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--card-border);
+      margin-bottom: 1.5rem;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+    }
+
+    .brand-icon {
+      width: 44px;
+      height: 44px;
+      background: linear-gradient(135deg, #2563eb, #10b981);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.4rem;
+      box-shadow: 0 4px 15px rgba(37, 99, 235, 0.35);
+    }
+
+    .brand-title h1 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-title p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      padding: 0.4rem 0.85rem;
+      border-radius: 9999px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #10b981;
+      box-shadow: 0 0 10px #10b981;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* Stats Grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .stat-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .stat-card::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: var(--primary);
+    }
+
+    .stat-card.accent::after { background: var(--accent); }
+    .stat-card.warning::after { background: var(--warning); }
+    .stat-card.purple::after { background: #8b5cf6; }
+
+    .stat-label {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 600;
+    }
+
+    .stat-value {
+      font-size: 1.85rem;
+      font-weight: 700;
+      font-family: var(--font-mono);
+    }
+
+    .stat-sub {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    /* Progress bar */
+    .pool-bar-container {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .pool-bar-header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 0.5rem;
+      font-size: 0.85rem;
+    }
+
+    .progress-bar-bg {
+      height: 10px;
+      background: #1f2937;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #3b82f6, #10b981);
+      width: 0%;
+      transition: width 0.4s ease;
+    }
+
+    /* Main layout grid */
+    .main-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 1024px) {
+      .main-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Cards */
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .card-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Buttons */
+    .btn {
+      background: var(--primary);
+      color: white;
+      border: none;
+      padding: 0.55rem 1rem;
+      border-radius: 8px;
+      font-family: var(--font-sans);
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      transition: all 0.2s;
+    }
+
+    .btn:hover {
+      background: var(--primary-hover);
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary {
+      background: #374151;
+      color: #f3f4f6;
+    }
+    .btn-secondary:hover { background: #4b5563; }
+
+    .btn-success {
+      background: #059669;
+    }
+    .btn-success:hover { background: #047857; }
+
+    .btn-danger {
+      background: #dc2626;
+      padding: 0.35rem 0.7rem;
+      font-size: 0.75rem;
+    }
+    .btn-danger:hover { background: #b91c1c; }
+
+    /* Tables */
+    .table-container {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+
+    th {
+      text-align: left;
+      padding: 0.75rem 0.9rem;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--card-border);
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 0.75rem;
+      letter-spacing: 0.05em;
+    }
+
+    td {
+      padding: 0.75rem 0.9rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      font-family: var(--font-sans);
+    }
+
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .badge-ip {
+      font-family: var(--font-mono);
+      font-weight: 600;
+      color: #60a5fa;
+      background: rgba(59, 130, 246, 0.12);
+      padding: 0.2rem 0.5rem;
+      border-radius: 6px;
+    }
+
+    .badge-mac {
+      font-family: var(--font-mono);
+      color: #d1d5db;
+      font-size: 0.8rem;
+    }
+
+    .badge-type {
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 0.15rem 0.45rem;
+      border-radius: 4px;
+    }
+    .badge-type.dynamic {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+    }
+    .badge-type.static {
+      background: rgba(245, 158, 11, 0.15);
+      color: #fbbf24;
+    }
+
+    /* Simulation Box */
+    .sim-box {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 10px;
+      padding: 1rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .sim-controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 0.75rem;
+      align-items: center;
+    }
+
+    @media (max-width: 640px) {
+      .sim-controls {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    input, select {
+      width: 100%;
+      background: #1f2937;
+      border: 1px solid #374151;
+      color: white;
+      padding: 0.55rem 0.75rem;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-family: var(--font-sans);
+    }
+    input:focus, select:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+
+    /* Dora visual steps */
+    .dora-flow {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.5rem;
+      margin-top: 1rem;
+      padding: 0.75rem;
+      background: #111827;
+      border-radius: 8px;
+      font-size: 0.75rem;
+      text-align: center;
+    }
+
+    .dora-step {
+      flex: 1;
+      padding: 0.4rem;
+      background: #1f2937;
+      border-radius: 6px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      transition: all 0.3s;
+    }
+    .dora-step.active {
+      background: var(--primary);
+      color: white;
+      box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+    }
+
+    /* Form Grid */
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+    }
+    .form-group {
+      margin-bottom: 0.5rem;
+    }
+    .form-group label {
+      display: block;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-bottom: 0.25rem;
+    }
+
+    /* Log Feed */
+    .log-terminal {
+      background: #030712;
+      border: 1px solid #1f2937;
+      border-radius: 10px;
+      height: 380px;
+      overflow-y: auto;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      padding: 0.75rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    .log-line {
+      display: flex;
+      gap: 0.5rem;
+      align-items: flex-start;
+      line-height: 1.4;
+      word-break: break-all;
+    }
+
+    .log-time {
+      color: #6b7280;
+      flex-shrink: 0;
+    }
+
+    .log-tag {
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 0.1rem 0.35rem;
+      border-radius: 4px;
+      flex-shrink: 0;
+    }
+
+    .tag-DISCOVER { background: #3b82f6; color: white; }
+    .tag-OFFER { background: #06b6d4; color: black; }
+    .tag-REQUEST { background: #8b5cf6; color: white; }
+    .tag-ACK { background: #10b981; color: black; }
+    .tag-NAK { background: #ef4444; color: white; }
+    .tag-RELEASE { background: #6b7280; color: white; }
+    .tag-SYSTEM { background: #374151; color: #9ca3af; }
+    .tag-WARNING { background: #f59e0b; color: black; }
+
+    .empty-state {
+      text-align: center;
+      padding: 2rem 1rem;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+
+    /* Toast Notification */
+    #toast {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: #1f2937;
+      color: white;
+      padding: 0.75rem 1.25rem;
+      border-radius: 8px;
+      border-left: 4px solid var(--primary);
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      transform: translateY(100px);
+      opacity: 0;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 100;
+      font-size: 0.85rem;
+    }
+    #toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <!-- Header -->
+    <header>
+      <div class="brand">
+        <div class="brand-icon">⚡</div>
+        <div class="brand-title">
+          <h1>DHCP Server & Network IP Manager</h1>
+          <p>Αυτόματη απόδοση & διαχείριση διευθύνσεων IP σε υπολογιστές τοπικού δικτύου (LAN)</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <div class="status-badge">
+          <div class="status-dot"></div>
+          <span>DHCP Active</span>
+        </div>
+        <button class="btn btn-secondary" onclick="fetchStatus()">🔄 Ανανέωση</button>
+      </div>
+    </header>
+
+    <!-- Stats Overview -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Συνολικό IP Pool</div>
+        <div class="stat-value" id="stat-total">0</div>
+        <div class="stat-sub" id="stat-range">192.168.1.100 - 192.168.1.150</div>
+      </div>
+      <div class="stat-card accent">
+        <div class="stat-label">Ενεργές Μισθώσεις (Leases)</div>
+        <div class="stat-value" id="stat-leased">0</div>
+        <div class="stat-sub">Υπολογιστές με IP</div>
+      </div>
+      <div class="stat-card warning">
+        <div class="stat-label">Διαθέσιμες IPs</div>
+        <div class="stat-value" id="stat-avail">0</div>
+        <div class="stat-sub">Ελεύθερες προς απόδοση</div>
+      </div>
+      <div class="stat-card purple">
+        <div class="stat-label">Static Reservations</div>
+        <div class="stat-value" id="stat-reserved">0</div>
+        <div class="stat-sub">Δεσμευμένες σταθερές IPs</div>
+      </div>
+    </div>
+
+    <!-- Utilization Bar -->
+    <div class="pool-bar-container">
+      <div class="pool-bar-header">
+        <span><strong>Ποσοστό Χρήσης IP Pool (Utilization)</strong></span>
+        <span id="pool-pct-label">0%</span>
+      </div>
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill" id="pool-pct-fill"></div>
+      </div>
+    </div>
+
+    <!-- Main Grid: Tables vs Controls & Logs -->
+    <div class="main-grid">
+      <!-- Left Column: Leases & Reservations -->
+      <div class="left-col">
+        
+        <!-- Simulation Interactive Station -->
+        <div class="card">
+          <div class="card-title">
+            <span>🧪 Προσομοίωση Σύνδεσης Υπολογιστή (Client Simulator)</span>
+          </div>
+          <div class="sim-box">
+            <p style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+              Δοκιμάστε την αυτόματη απόδοση IP σε έναν νέο εικονικό υπολογιστή μέσω του πρωτοκόλλου DORA:
+            </p>
+            <div class="sim-controls">
+              <input type="text" id="sim-hostname" placeholder="Όνομα Υπολογιστή (π.χ. PC-Lab-01)" value="PC-Office-1">
+              <input type="text" id="sim-mac" placeholder="MAC Address (π.χ. 00:1A:2B:3C:4D:5E)">
+              <button class="btn btn-success" onclick="simulateClientRequest()">
+                ⚡ Αίτηση IP (DHCP)
+              </button>
+            </div>
+            <div style="margin-top: 0.5rem; display: flex; gap: 0.5rem;">
+              <button class="btn btn-secondary" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;" onclick="generateRandomClient()">
+                🎲 Τυχαία Συσκευή
+              </button>
+            </div>
+
+            <!-- Animated DORA steps visualizer -->
+            <div class="dora-flow" id="dora-steps">
+              <div class="dora-step" id="step-discover">1. DISCOVER<br><small>Αναζήτηση Server</small></div>
+              <div class="dora-step" id="step-offer">2. OFFER<br><small>Προσφορά IP</small></div>
+              <div class="dora-step" id="step-request">3. REQUEST<br><small>Αίτημα IP</small></div>
+              <div class="dora-step" id="step-ack">4. ACK<br><small>Επιβεβαίωση</small></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Active Leases Table -->
+        <div class="card">
+          <div class="card-title">
+            <span>💻 Ενεργές Αποδόσεις IP (Active DHCP Leases)</span>
+            <span style="font-size: 0.8rem; color: var(--text-muted);" id="lease-count-badge">0 συσκευές</span>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Υπολογιστής</th>
+                  <th>IP Διεύθυνση</th>
+                  <th>MAC Address</th>
+                  <th>Λήξη Μίσθωσης</th>
+                  <th>Τύπος</th>
+                  <th>Ενέργεια</th>
+                </tr>
+              </thead>
+              <tbody id="leases-table-body">
+                <tr><td colspan="6" class="empty-state">Δεν υπάρχουν ενεργές μισθώσεις ακόμη.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Static Reservations Table -->
+        <div class="card">
+          <div class="card-title">
+            <span>🔒 Στατικές Δεσμεύσεις IP (Static IP Reservations)</span>
+          </div>
+          <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+            Εξασφαλίστε ότι συγκεκριμένοι υπολογιστές, servers ή εκτυπωτές θα παίρνουν πάντα την ίδια προκαθορισμένη IP.
+          </p>
+          <div class="form-grid" style="margin-bottom: 0.75rem;">
+            <input type="text" id="res-mac" placeholder="MAC (π.χ. 00:11:22:33:44:55)">
+            <input type="text" id="res-ip" placeholder="Στατική IP (π.χ. 192.168.1.50)">
+          </div>
+          <div class="form-grid" style="margin-bottom: 0.75rem;">
+            <input type="text" id="res-name" placeholder="Όνομα Συσκευής (π.χ. Printer-HP)">
+            <input type="text" id="res-note" placeholder="Σημείωση (προαιρετικό)">
+          </div>
+          <button class="btn" style="margin-bottom: 1rem;" onclick="addReservation()">➕ Προσθήκη Στατικής IP</button>
+
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Συσκευή</th>
+                  <th>Στατική IP</th>
+                  <th>MAC Address</th>
+                  <th>Σημείωση</th>
+                  <th>Ενέργεια</th>
+                </tr>
+              </thead>
+              <tbody id="reservations-table-body">
+                <tr><td colspan="5" class="empty-state">Δεν υπάρχουν στατικές δεσμεύσεις.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Right Column: Settings & Live Logs -->
+      <div class="right-col">
+        
+        <!-- DHCP Network Scope Configuration -->
+        <div class="card">
+          <div class="card-title">
+            <span>⚙️ Ρυθμίσεις Δικτύου DHCP</span>
+          </div>
+          <form id="config-form" onsubmit="saveConfig(event)">
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Έναρξη Pool (Start IP)</label>
+                <input type="text" id="cfg-start-ip" required>
+              </div>
+              <div class="form-group">
+                <label>Λήξη Pool (End IP)</label>
+                <input type="text" id="cfg-end-ip" required>
+              </div>
+            </div>
+
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Μάσκα Υποδικτύου (Subnet)</label>
+                <input type="text" id="cfg-subnet" required>
+              </div>
+              <div class="form-group">
+                <label>Προεπιλεγμένη Πύλη (Gateway)</label>
+                <input type="text" id="cfg-gateway" required>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>DNS Servers (χωρισμένοι με κόμμα)</label>
+              <input type="text" id="cfg-dns" required>
+            </div>
+
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Διάρκεια Μίσθωσης (Δευτερόλεπτα)</label>
+                <input type="number" id="cfg-lease-time" min="60" required>
+              </div>
+              <div class="form-group">
+                <label>Όνομα Τοπικού Domain</label>
+                <input type="text" id="cfg-domain" required>
+              </div>
+            </div>
+
+            <button type="submit" class="btn" style="width: 100%; margin-top: 0.5rem; justify-content: center;">
+              💾 Αποθήκευση Ρυθμίσεων
+            </button>
+          </form>
+        </div>
+
+        <!-- Real DHCP Socket Mode (UDP 67) -->
+        <div class="card">
+          <div class="card-title">
+            <span>📡 Πραγματικό Δίκτυο (UDP Port 67)</span>
+          </div>
+          <p style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+            Μπορείτε να ενεργοποιήσετε την ακρόαση σε πραγματικά αιτήματα δικτύου (απαιτεί εκτέλεση ως Administrator στο Windows).
+          </p>
+          <div style="display: flex; align-items: center; justify-content: space-between; background: #1f2937; padding: 0.6rem 0.8rem; border-radius: 8px;">
+            <span style="font-size: 0.82rem; font-weight: 600;" id="real-dhcp-status-text">Ανενεργό</span>
+            <button class="btn btn-secondary" id="real-dhcp-btn" onclick="toggleRealDhcp()" style="font-size: 0.78rem;">
+              Ενεργοποίηση
+            </button>
+          </div>
+          <div id="real-dhcp-error-msg" style="margin-top: 0.5rem; font-size: 0.75rem; color: #f87171; display: none;"></div>
+        </div>
+
+        <!-- Live Network Activity Log -->
+        <div class="card">
+          <div class="card-title">
+            <span>📜 Καταγραφή Συμβάντων (Live Log)</span>
+            <button class="btn btn-secondary" style="font-size: 0.7rem; padding: 0.2rem 0.5rem;" onclick="clearLogsView()">Καθαρισμός</button>
+          </div>
+          <div class="log-terminal" id="log-terminal">
+            <!-- Dynamic logs -->
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div id="toast">Μήνυμα ειδοποίησης</div>
+
+  <script>
+    let currentConfig = {};
+    let realDhcpRunning = false;
+
+    function showToast(msg, isError = false) {
+      const toast = document.getElementById('toast');
+      toast.innerText = msg;
+      toast.style.borderLeftColor = isError ? 'var(--danger)' : 'var(--primary)';
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 3500);
+    }
+
+    function generateRandomMac() {
+      const hex = '0123456789ABCDEF';
+      let mac = '02'; // Local bit
+      for (let i = 0; i < 5; i++) {
+        mac += ':' + hex[Math.floor(Math.random() * 16)] + hex[Math.floor(Math.random() * 16)];
+      }
+      return mac;
+    }
+
+    function generateRandomClient() {
+      const names = ['Laptop-Lenovo', 'Desktop-Admin', 'MacBook-Pro', 'Workstation-Dev', 'Tablet-Sales', 'Server-Backup'];
+      const chosen = names[Math.floor(Math.random() * names.length)] + '-' + Math.floor(Math.random() * 90 + 10);
+      document.getElementById('sim-hostname').value = chosen;
+      document.getElementById('sim-mac').value = generateRandomMac();
+    }
+
+    // Ανάκτηση κατάστασης server
+    async function fetchStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        renderDashboard(data);
+      } catch (err) {
+        console.error("Error fetching status:", err);
+      }
+    }
+
+    function renderDashboard(data) {
+      currentConfig = data.config;
+      const stats = data.stats;
+
+      // Stats
+      document.getElementById('stat-total').innerText = stats.total_pool_ips;
+      document.getElementById('stat-range').innerText = `${data.config.start_ip} - ${data.config.end_ip}`;
+      document.getElementById('stat-leased').innerText = stats.active_leases;
+      document.getElementById('stat-avail').innerText = stats.available_ips;
+      document.getElementById('stat-reserved').innerText = stats.reserved_ips;
+
+      // Utilization bar
+      const pct = stats.utilization_percent;
+      document.getElementById('pool-pct-label').innerText = `${pct}% (${stats.active_leases} από ${stats.total_pool_ips} IPs)`;
+      document.getElementById('pool-pct-fill').style.width = `${pct}%`;
+
+      // Config form fields (if not focused)
+      if (document.activeElement.tagName !== 'INPUT') {
+        document.getElementById('cfg-start-ip').value = data.config.start_ip;
+        document.getElementById('cfg-end-ip').value = data.config.end_ip;
+        document.getElementById('cfg-subnet').value = data.config.subnet_mask;
+        document.getElementById('cfg-gateway').value = data.config.gateway;
+        document.getElementById('cfg-dns').value = (data.config.dns_servers || []).join(', ');
+        document.getElementById('cfg-lease-time').value = data.config.lease_duration_seconds;
+        document.getElementById('cfg-domain').value = data.config.domain_name;
+      }
+
+      // Leases Table
+      const leasesTbody = document.getElementById('leases-table-body');
+      document.getElementById('lease-count-badge').innerText = `${data.leases.length} συσκευές`;
+
+      if (!data.leases || data.leases.length === 0) {
+        leasesTbody.innerHTML = `<tr><td colspan="6" class="empty-state">Δεν υπάρχουν ενεργές μισθώσεις ακόμη. Κάντε προσομοίωση ή συνδέστε συσκευή.</td></tr>`;
+      } else {
+        leasesTbody.innerHTML = data.leases.map(l => `
+          <tr>
+            <td><strong>${escapeHtml(l.hostname)}</strong></td>
+            <td><span class="badge-ip">${l.ip}</span></td>
+            <td><span class="badge-mac">${l.mac}</span></td>
+            <td>${l.is_static ? 'Μόνιμο (Static)' : (l.remaining_seconds > 0 ? formatSeconds(l.remaining_seconds) : 'Έληξε')}</td>
+            <td><span class="badge-type ${l.is_static ? 'static' : 'dynamic'}">${l.is_static ? 'STATIC' : 'DYNAMIC'}</span></td>
+            <td>
+              <button class="btn btn-danger" onclick="revokeLease('${l.mac}')">Αποδέσμευση</button>
+            </td>
+          </tr>
+        `).join('');
+      }
+
+      // Reservations Table
+      const resTbody = document.getElementById('reservations-table-body');
+      if (!data.reservations || data.reservations.length === 0) {
+        resTbody.innerHTML = `<tr><td colspan="5" class="empty-state">Δεν υπάρχουν στατικές δεσμεύσεις.</td></tr>`;
+      } else {
+        resTbody.innerHTML = data.reservations.map(r => `
+          <tr>
+            <td><strong>${escapeHtml(r.hostname || 'Device')}</strong></td>
+            <td><span class="badge-ip">${r.ip}</span></td>
+            <td><span class="badge-mac">${r.mac}</span></td>
+            <td style="color: var(--text-muted); font-size: 0.8rem;">${escapeHtml(r.note || '-')}</td>
+            <td>
+              <button class="btn btn-danger" onclick="removeReservation('${r.mac}')">Διαγραφή</button>
+            </td>
+          </tr>
+        `).join('');
+      }
+
+      // Logs
+      renderLogs(data.logs);
+
+      // Real DHCP status
+      realDhcpRunning = data.real_socket_running;
+      const statusText = document.getElementById('real-dhcp-status-text');
+      const realBtn = document.getElementById('real-dhcp-btn');
+      const errBox = document.getElementById('real-dhcp-error-msg');
+
+      if (realDhcpRunning) {
+        statusText.innerHTML = '<span style="color: #34d399;">● Ενεργό (Port 67)</span>';
+        realBtn.innerText = 'Διακοπή';
+        realBtn.className = 'btn btn-danger';
+        errBox.style.display = 'none';
+      } else {
+        statusText.innerHTML = '<span style="color: #9ca3af;">○ Ανενεργό</span>';
+        realBtn.innerText = 'Ενεργοποίηση';
+        realBtn.className = 'btn btn-secondary';
+        if (data.real_socket_error) {
+          errBox.style.display = 'block';
+          errBox.innerText = 'Σφάλμα: ' + data.real_socket_error;
+        } else {
+          errBox.style.display = 'none';
+        }
+      }
+    }
+
+    function renderLogs(logs) {
+      const term = document.getElementById('log-terminal');
+      if (!logs || logs.length === 0) {
+        term.innerHTML = '<div style="color: #6b7280; padding: 1rem; text-align: center;">Καμία καταγραφή ακόμα...</div>';
+        return;
+      }
+
+      term.innerHTML = logs.map(l => `
+        <div class="log-line">
+          <span class="log-time">[${l.timestamp}]</span>
+          <span class="log-tag tag-${l.level}">${l.level}</span>
+          <span>${escapeHtml(l.message)}</span>
+        </div>
+      `).join('');
+    }
+
+    function clearLogsView() {
+      document.getElementById('log-terminal').innerHTML = '<div style="color: #6b7280; padding: 1rem; text-align: center;">Το παράθυρο καταγραφής καθαρίστηκε.</div>';
+    }
+
+    async function simulateClientRequest() {
+      const hostname = document.getElementById('sim-hostname').value.trim() || 'Virtual-PC';
+      let mac = document.getElementById('sim-mac').value.trim();
+      if (!mac) {
+        mac = generateRandomMac();
+        document.getElementById('sim-mac').value = mac;
+      }
+
+      // Animate DORA steps
+      highlightDoraStep('step-discover');
+      await delay(200);
+      highlightDoraStep('step-offer');
+      await delay(200);
+      highlightDoraStep('step-request');
+
+      try {
+        const res = await fetch('/api/simulate/request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ hostname, mac })
+        });
+        const data = await res.json();
+        
+        await delay(200);
+        highlightDoraStep('step-ack');
+
+        if (res.ok) {
+          showToast(`✅ Επιτυχία! Αποδόθηκε η IP ${data.lease.ip} στο ${hostname}`);
+          fetchStatus();
+        } else {
+          showToast(`❌ Σφάλμα: ${data.message || 'Αποτυχία απόδοσης IP'}`, true);
+        }
+      } catch (err) {
+        showToast('Σφάλμα σύνδεσης με τον server', true);
+      } finally {
+        setTimeout(resetDoraSteps, 2000);
+      }
+    }
+
+    function highlightDoraStep(id) {
+      document.querySelectorAll('.dora-step').forEach(el => el.classList.remove('active'));
+      const target = document.getElementById(id);
+      if (target) target.classList.add('active');
+    }
+
+    function resetDoraSteps() {
+      document.querySelectorAll('.dora-step').forEach(el => el.classList.remove('active'));
+    }
+
+    async function revokeLease(mac) {
+      if (!confirm(`Θέλετε να ανακαλέσετε τη μίσθωση για τη MAC: ${mac};`)) return;
+      try {
+        const res = await fetch('/api/leases/revoke', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mac })
+        });
+        showToast('Η IP απελευθερώθηκε!');
+        fetchStatus();
+      } catch (err) {
+        showToast('Σφάλμα ανάκλησης', true);
+      }
+    }
+
+    async function addReservation() {
+      const mac = document.getElementById('res-mac').value.trim();
+      const ip = document.getElementById('res-ip').value.trim();
+      const hostname = document.getElementById('res-name').value.trim();
+      const note = document.getElementById('res-note').value.trim();
+
+      if (!mac || !ip) {
+        showToast('Συμπληρώστε MAC address και IP!', true);
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/reservations/add', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mac, ip, hostname, note })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast(`Στατική δέσμευση αποθηκεύτηκε: ${ip}`);
+          document.getElementById('res-mac').value = '';
+          document.getElementById('res-ip').value = '';
+          document.getElementById('res-name').value = '';
+          document.getElementById('res-note').value = '';
+          fetchStatus();
+        } else {
+          showToast(data.message || 'Σφάλμα', true);
+        }
+      } catch (err) {
+        showToast('Σφάλμα κατά την προσθήκη', true);
+      }
+    }
+
+    async function removeReservation(mac) {
+      if (!confirm(`Διαγραφή στατικής δέσμευσης για ${mac};`)) return;
+      try {
+        await fetch('/api/reservations/remove', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mac })
+        });
+        showToast('Η δέσμευση διαγράφηκε');
+        fetchStatus();
+      } catch (err) {
+        showToast('Σφάλμα διαγραφής', true);
+      }
+    }
+
+    async function saveConfig(e) {
+      e.preventDefault();
+      const payload = {
+        start_ip: document.getElementById('cfg-start-ip').value.trim(),
+        end_ip: document.getElementById('cfg-end-ip').value.trim(),
+        subnet_mask: document.getElementById('cfg-subnet').value.trim(),
+        gateway: document.getElementById('cfg-gateway').value.trim(),
+        dns_servers: document.getElementById('cfg-dns').value.trim(),
+        lease_duration_seconds: parseInt(document.getElementById('cfg-lease-time').value.trim()),
+        domain_name: document.getElementById('cfg-domain').value.trim()
+      };
+
+      try {
+        const res = await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        showToast('Οι ρυθμίσεις δικτύου αποθηκεύτηκαν!');
+        fetchStatus();
+      } catch (err) {
+        showToast('Σφάλμα αποθήκευσης ρυθμίσεων', true);
+      }
+    }
+
+    async function toggleRealDhcp() {
+      const action = realDhcpRunning ? 'stop' : 'start';
+      try {
+        const res = await fetch('/api/toggle-real-dhcp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action })
+        });
+        const data = await res.json();
+        renderDashboard(data);
+      } catch (err) {
+        showToast('Σφάλμα ενεργοποίησης/διακοπής UDP listener', true);
+      }
+    }
+
+    function formatSeconds(secs) {
+      if (secs >= 3600) {
+        const h = Math.floor(secs / 3600);
+        const m = Math.floor((secs % 3600) / 60);
+        return `${h} ώρες ${m} λ`;
+      }
+      if (secs >= 60) {
+        return `${Math.floor(secs / 60)} λεπτά`;
+      }
+      return `${secs} δευτ.`;
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/[&<>"']/g, function(m) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
+      });
+    }
+
+    function delay(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    // Auto-init
+    generateRandomClient();
+    fetchStatus();
+    setInterval(fetchStatus, 3000);
+  </script>
+</body>
+</html>
