@@ -1,6 +1,8 @@
 import os
 import sys
 import json
+import csv
+import io
 import urllib.parse
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from dhcp_engine import DHCPEngine
@@ -21,6 +23,16 @@ class DHCPRequestHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_csv(self, filename: str, content: str):
+        body = content.encode('utf-8-sig')  # UTF-8 with BOM for Excel compatibility
+        self.send_response(200)
+        self.send_header("Content-Type", "text/csv; charset=utf-8")
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _read_json_body(self):
         content_length = int(self.headers.get('Content-Length', 0))
         if content_length > 0:
@@ -34,6 +46,31 @@ class DHCPRequestHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/status":
             self._send_json(dhcp.get_status())
+            return
+
+        elif path == "/api/export/json":
+            status_data = dhcp.get_status()
+            self._send_json(status_data)
+            return
+
+        elif path == "/api/export/csv":
+            # Generate CSV export of leases
+            status_data = dhcp.get_status()
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow(["Hostname", "IP Address", "MAC Address", "Type", "Status", "Issued At", "Expires At"])
+            
+            for l in status_data.get("leases", []):
+                writer.writerow([
+                    l["hostname"],
+                    l["ip"],
+                    l["mac"],
+                    "Static" if l["is_static"] else "Dynamic",
+                    "Online" if l.get("is_online") else "Offline",
+                    l["issued_at"],
+                    l["expires_at"]
+                ])
+            self._send_csv("dhcp_leases_report.csv", output.getvalue())
             return
         
         # Default index.html
@@ -55,7 +92,6 @@ class DHCPRequestHandler(SimpleHTTPRequestHandler):
                 return
 
             elif path == "/api/simulate/request":
-                # Simulated client asks for IP (DORA: Discover -> Offer -> Request -> Ack)
                 mac = body.get("mac", "02:00:00:11:22:33")
                 hostname = body.get("hostname", "PC-Simulated")
                 requested_ip = body.get("requested_ip")
@@ -116,6 +152,11 @@ class DHCPRequestHandler(SimpleHTTPRequestHandler):
                 self._send_json(res)
                 return
 
+            elif path == "/api/alerts/clear":
+                dhcp.clear_alerts()
+                self._send_json({"status": "OK", "message": "Alerts cleared"})
+                return
+
             elif path == "/api/toggle-real-dhcp":
                 action = body.get("action", "start")
                 if action == "start":
@@ -132,21 +173,21 @@ class DHCPRequestHandler(SimpleHTTPRequestHandler):
             self._send_json({"status": "ERROR", "message": str(e)}, status_code=500)
 
     def log_message(self, format, *args):
-        # Αποφυγή spam στην κονσόλα για τα static requests
         pass
 
 
 def run(port=8080):
     server_address = ('', port)
     httpd = ThreadingHTTPServer(server_address, DHCPRequestHandler)
-    print("=" * 60)
-    print("   🌐 DHCP SERVER & NETWORK IP MANAGER (PYTHON)")
-    print("=" * 60)
-    print(f" -> Web Dashboard:  http://localhost:{port}")
-    print(f" -> Web Dashboard:  http://127.0.0.1:{port}")
-    print("=" * 60)
+    print("=" * 65)
+    print("   🌐 DHCP SERVER & NETWORK IP MANAGER (PYTHON + SQLITE)")
+    print("=" * 65)
+    print(f" -> Web Dashboard:    http://localhost:{port}")
+    print(f" -> Live Status API:  http://localhost:{port}/api/status")
+    print(f" -> Export CSV:       http://localhost:{port}/api/export/csv")
+    print("=" * 65)
     print(" Πατήστε Ctrl+C για τερματισμό του διακομιστή.")
-    print("=" * 60)
+    print("=" * 65)
 
     try:
         httpd.serve_forever()

@@ -2,19 +2,27 @@ import time
 import socket
 import struct
 import threading
+import subprocess
+import platform
 from datetime import datetime, timedelta
 import ipaddress
+from db_manager import DHCPDatabase
 
 class DHCPLease:
-    def __init__(self, ip: str, mac: str, hostname: str = "Unknown", duration_seconds: int = 86400, is_static: bool = False):
+    def __init__(self, ip: str, mac: str, hostname: str = "Unknown", duration_seconds: int = 86400, is_static: bool = False, issued_at: datetime = None, expires_at: datetime = None, state: str = "ACTIVE", is_online: bool = False):
         self.ip = ip
         self.mac = mac.upper()
         self.hostname = hostname or "Unknown"
         self.duration_seconds = duration_seconds
         self.is_static = is_static
-        self.issued_at = datetime.now()
-        self.expires_at = datetime.max if is_static else self.issued_at + timedelta(seconds=duration_seconds)
-        self.state = "ACTIVE"  # ACTIVE, EXPIRED, RELEASED
+        self.issued_at = issued_at if issued_at else datetime.now()
+        if expires_at:
+            self.expires_at = expires_at
+        else:
+            self.expires_at = datetime.max if is_static else self.issued_at + timedelta(seconds=duration_seconds)
+        self.state = state
+        self.is_online = is_online
+        self.last_seen = datetime.now()
 
     def is_expired(self) -> bool:
         if self.is_static:
@@ -26,20 +34,23 @@ class DHCPLease:
             "ip": self.ip,
             "mac": self.mac,
             "hostname": self.hostname,
-            "issued_at": self.issued_at.strftime("%Y-%m-%d %H:%M:%S"),
-            "expires_at": "Never (Static)" if self.is_static else self.expires_at.strftime("%Y-%m-%d %H:%M:%S"),
-            "remaining_seconds": -1 if self.is_static else max(0, int((self.expires_at - datetime.now()).total_seconds())),
-            "is_static": self.is_static,
-            "state": "EXPIRED" if self.is_expired() else self.state
+            "issued_at": self.issued_at.strftime("%Y-%m-%d %H:%M:%S") if isinstance(self.issued_at, datetime) else str(self.issued_at),
+            "expires_at": "Never (Static)" if self.is_static else (self.expires_at.strftime("%Y-%m-%d %H:%M:%S") if isinstance(self.expires_at, datetime) else str(self.expires_at)),
+            "remaining_seconds": -1 if self.is_static else max(0, int((self.expires_at - datetime.now()).total_seconds())) if isinstance(self.expires_at, datetime) else 0,
+            "is_static": bool(self.is_static),
+            "state": "EXPIRED" if self.is_expired() else self.state,
+            "is_online": bool(self.is_online),
+            "last_seen": self.last_seen.strftime("%Y-%m-%d %H:%M:%S") if isinstance(self.last_seen, datetime) else str(self.last_seen)
         }
 
 
 class DHCPEngine:
     def __init__(self):
         self.lock = threading.Lock()
+        self.db = DHCPDatabase()
         
-        # Configuration
-        self.config = {
+        # Default configuration
+        default_config = {
             "network": "192.168.1.0/24",
             "start_ip": "192.168.1.100",
             "end_ip": "192.168.1.150",
@@ -47,34 +58,72 @@ class DHCPEngine:
             "gateway": "192.168.1.1",
             "dns_servers": ["8.8.8.8", "1.1.1.1"],
             "domain_name": "lan.local",
-            "lease_duration_seconds": 3600  # 1 ώρα default
+            "lease_duration_seconds": 3600
         }
 
-        # Reservations: MAC -> {ip, hostname, note}
-        self.reservations = {
-            "00:1A:2B:3C:4D:5E": {
-                "ip": "192.168.1.99",
-                "hostname": "Server-NAS",
-                "note": "Static assignment for File Server"
+        # Load saved config from database
+        saved_config = self.db.load_config()
+        self.config = {**default_config, **saved_config}
+        if not saved_config:
+            self.db.save_config(self.config)
+
+        # Load reservations from database
+        self.reservations = self.db.load_reservations()
+        if not self.reservations:
+            # Seed default reservation
+            self.reservations = {
+                "00:1A:2B:3C:4D:5E": {
+                    "ip": "192.168.1.99",
+                    "hostname": "Server-NAS",
+                    "note": "Static assignment for File Server"
+                }
             }
-        }
+            self.db.save_reservation("00:1A:2B:3C:4D:5E", "192.168.1.99", "Server-NAS", "Static assignment for File Server")
 
-        # Leases: MAC -> DHCPLease
+        # Load active leases from database
         self.leases = {}
-        
-        # Activity log
+        saved_leases = self.db.load_leases()
+        for sl in saved_leases:
+            try:
+                iss = datetime.strptime(sl["issued_at"], "%Y-%m-%d %H:%M:%S")
+                exp = datetime.max if sl["is_static"] else datetime.strptime(sl["expires_at"], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                iss = datetime.now()
+                exp = datetime.now() + timedelta(seconds=sl.get("duration_seconds", 3600))
+
+            lease = DHCPLease(
+                ip=sl["ip"],
+                mac=sl["mac"],
+                hostname=sl["hostname"],
+                duration_seconds=sl["duration_seconds"],
+                is_static=bool(sl["is_static"]),
+                issued_at=iss,
+                expires_at=exp,
+                state=sl.get("state", "ACTIVE"),
+                is_online=bool(sl.get("is_online", False))
+            )
+            if not lease.is_expired():
+                self.leases[lease.mac] = lease
+
+        # Activity logs & security alerts
         self.logs = []
-        self._add_log("SYSTEM", "DHCP Engine initialized successfully.")
+        self.alerts = []
+        self._add_log("SYSTEM", "DHCP Engine & SQLite Database initialized successfully.")
 
         # Real UDP Socket State
         self.real_socket_running = False
         self.real_socket_thread = None
         self.real_socket_error = None
 
+        # Network Health Ping Probe Thread
+        self.ping_scanner_running = True
+        self.ping_thread = threading.Thread(target=self._ping_scanner_loop, daemon=True)
+        self.ping_thread.start()
+
     def _add_log(self, level: str, message: str, mac: str = None, ip: str = None):
         entry = {
             "timestamp": datetime.now().strftime("%H:%M:%S"),
-            "level": level,  # DISCOVER, OFFER, REQUEST, ACK, NAK, RELEASE, SYSTEM, WARNING
+            "level": level,  # DISCOVER, OFFER, REQUEST, ACK, NAK, RELEASE, SYSTEM, WARNING, SECURITY_ALERT
             "message": message,
             "mac": mac,
             "ip": ip
@@ -82,6 +131,28 @@ class DHCPEngine:
         self.logs.insert(0, entry)
         if len(self.logs) > 100:
             self.logs.pop()
+        
+        # Save to DB
+        try:
+            self.db.add_log(level, message, mac, ip)
+        except Exception:
+            pass
+
+    def add_alert(self, alert_type: str, title: str, description: str):
+        alert = {
+            "id": f"{int(time.time()*1000)}",
+            "type": alert_type,  # warning, danger, info
+            "title": title,
+            "description": description,
+            "timestamp": datetime.now().strftime("%H:%M:%S")
+        }
+        self.alerts.insert(0, alert)
+        if len(self.alerts) > 10:
+            self.alerts.pop()
+
+    def clear_alerts(self):
+        with self.lock:
+            self.alerts = []
 
     def update_config(self, new_config: dict):
         with self.lock:
@@ -98,7 +169,8 @@ class DHCPEngine:
                 elif isinstance(new_config["dns_servers"], list):
                     self.config["dns_servers"] = [str(x).strip() for x in new_config["dns_servers"] if str(x).strip()]
 
-            self._add_log("SYSTEM", "Network configuration updated.")
+            self.db.save_config(self.config)
+            self._add_log("SYSTEM", "Network configuration updated and persisted to SQLite.")
 
     def add_reservation(self, mac: str, ip: str, hostname: str = "", note: str = ""):
         mac = mac.upper().strip()
@@ -111,6 +183,7 @@ class DHCPEngine:
             }
             if mac in self.leases:
                 del self.leases[mac]
+            self.db.save_reservation(mac, ip, hostname, note)
             self._add_log("SYSTEM", f"Static IP reservation added: {mac} -> {ip} ({hostname})", mac=mac, ip=ip)
 
     def remove_reservation(self, mac: str):
@@ -118,6 +191,7 @@ class DHCPEngine:
         with self.lock:
             if mac in self.reservations:
                 del self.reservations[mac]
+                self.db.delete_reservation(mac)
                 self._add_log("SYSTEM", f"Static IP reservation removed: {mac}", mac=mac)
 
     def _get_ip_range_list(self):
@@ -160,17 +234,23 @@ class DHCPEngine:
 
         return None
 
-    # --- DORA Process Implementation ---
+    # --- DORA Process Implementation with Security & Persistence ---
 
     def handle_discover(self, mac: str, hostname: str = "Client-PC", requested_ip: str = None) -> dict:
-        """Βήμα 1: DHCPDISCOVER από τον client -> Επιστρέφει DHCPOFFER"""
         mac = mac.upper().strip()
         with self.lock:
+            # Έλεγχος Rogue / Νέας Συσκευής
+            if not self.db.is_known_device(mac):
+                self._add_log("SECURITY_ALERT", f"New/Unknown device connected: {mac} ({hostname})", mac=mac)
+                self.add_alert("warning", "🚨 Νέα Συσκευή στο Δίκτυο", f"Συνδέθηκε άγνωστη συσκευή με MAC: {mac} ({hostname})")
+                self.db.register_device(mac, hostname)
+            
             self._add_log("DISCOVER", f"DHCPDISCOVER from {mac} ({hostname})", mac=mac)
             
             allocated_ip = self._find_available_ip(mac, requested_ip)
             if not allocated_ip:
                 self._add_log("WARNING", f"No available IPs in pool to offer {mac}!", mac=mac)
+                self.add_alert("danger", "⚠️ Εξάντληση IP Pool", "Δεν υπάρχουν άλλες ελεύθερες διευθύνσεις IP στο εύρος!")
                 return {"status": "ERROR", "message": "IP pool exhausted"}
 
             offer_packet = {
@@ -189,7 +269,6 @@ class DHCPEngine:
             return {"status": "OK", "offer": offer_packet}
 
     def handle_request(self, mac: str, hostname: str = "Client-PC", requested_ip: str = None) -> dict:
-        """Βήμα 2: DHCPREQUEST από τον client -> Επιστρέφει DHCPACK ή DHCPNAK"""
         mac = mac.upper().strip()
         with self.lock:
             self._add_log("REQUEST", f"DHCPREQUEST for IP {requested_ip} from {mac} ({hostname})", mac=mac, ip=requested_ip)
@@ -207,9 +286,19 @@ class DHCPEngine:
                 mac=mac,
                 hostname=hostname,
                 duration_seconds=self.config["lease_duration_seconds"],
-                is_static=is_static
+                is_static=is_static,
+                is_online=True
             )
             self.leases[mac] = lease
+            
+            # Persist to SQLite
+            self.db.save_lease(lease.to_dict())
+
+            # Pool utilization check
+            all_ips = self._get_ip_range_list()
+            active_count = len([l for l in self.leases.values() if not l.is_expired() and l.state == "ACTIVE"])
+            if len(all_ips) > 0 and (active_count / len(all_ips)) >= 0.85:
+                self.add_alert("warning", "📊 Υψηλή Χρήση IP Pool", f"Το IP Pool ξεπέρασε το 85% χωρητικότητας ({active_count}/{len(all_ips)} IPs)")
 
             ack_packet = {
                 "message_type": "DHCPACK",
@@ -223,23 +312,63 @@ class DHCPEngine:
                 "domain_name": self.config["domain_name"]
             }
 
-            self._add_log("ACK", f"DHCPACK IP {final_ip} assigned to {mac} ({hostname})", mac=mac, ip=final_ip)
+            self._add_log("ACK", f"DHCPACK IP {final_ip} confirmed & assigned to {mac} ({hostname})", mac=mac, ip=final_ip)
             return {"status": "OK", "ack": ack_packet, "lease": lease.to_dict()}
 
     def handle_release(self, mac: str) -> dict:
-        """DHCPRELEASE: Ο υπολογιστής απελευθερώνει την IP του"""
         mac = mac.upper().strip()
         with self.lock:
             if mac in self.leases:
                 released_ip = self.leases[mac].ip
                 self.leases[mac].state = "RELEASED"
                 del self.leases[mac]
+                self.db.delete_lease(mac)
                 self._add_log("RELEASE", f"DHCPRELEASE from {mac} - Released IP {released_ip}", mac=mac, ip=released_ip)
                 return {"status": "OK", "message": f"IP {released_ip} released"}
             return {"status": "NOT_FOUND", "message": "No active lease found for MAC"}
 
     def revoke_lease(self, mac: str) -> dict:
         return self.handle_release(mac)
+
+    # --- Background Ping Scanner (Network Health & Online Detection) ---
+
+    def _ping_scanner_loop(self):
+        """Περιοδικός έλεγχος Ping στις εκχωρημένες IPs για ανίχνευση Online/Offline κατάστασης"""
+        time.sleep(2)  # Αρχική καθυστέρηση
+        while self.ping_scanner_running:
+            try:
+                with self.lock:
+                    ips_to_check = [(l.ip, l.mac) for l in self.leases.values() if l.state == "ACTIVE"]
+
+                for ip, mac in ips_to_check:
+                    is_alive = self._ping_single_ip(ip)
+                    with self.lock:
+                        if mac in self.leases:
+                            self.leases[mac].is_online = is_alive
+                            self.leases[mac].last_seen = datetime.now()
+                            try:
+                                self.db.update_lease_online(ip, is_alive)
+                            except Exception:
+                                pass
+
+            except Exception as e:
+                pass
+            
+            # Έλεγχος κάθε 15 δευτερόλεπτα
+            time.sleep(15)
+
+    def _ping_single_ip(self, ip: str) -> bool:
+        """Εκτελεί γρήγορο ICMP Ping με timeout 400ms"""
+        try:
+            param = "-n" if platform.system().lower() == "windows" else "-c"
+            timeout_param = "-w" if platform.system().lower() == "windows" else "-W"
+            timeout_val = "400" if platform.system().lower() == "windows" else "1"
+            
+            cmd = ["ping", param, "1", timeout_param, timeout_val, ip]
+            res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1.5)
+            return res.returncode == 0
+        except Exception:
+            return False
 
     def get_status(self) -> dict:
         with self.lock:
@@ -263,10 +392,12 @@ class DHCPEngine:
                     "active_leases": active_count,
                     "reserved_ips": reserved_count,
                     "available_ips": available_count,
+                    "online_devices": len([l for l in active_leases_list if l.get("is_online")]),
                     "utilization_percent": round((active_count / total_pool * 100), 1) if total_pool > 0 else 0
                 },
                 "leases": active_leases_list,
                 "reservations": [{"mac": k, **v} for k, v in self.reservations.items()],
+                "alerts": self.alerts,
                 "logs": self.logs[:50],
                 "real_socket_running": self.real_socket_running,
                 "real_socket_error": self.real_socket_error
