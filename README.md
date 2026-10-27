@@ -6,7 +6,7 @@
 [![Database](https://img.shields.io/badge/Database-SQLite%203-003B57.svg)](https://www.sqlite.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](#)
 
-Ένα πλήρες, σύγχρονο σύστημα αυτόματης απόδοσης και διαχείρισης διευθύνσεων IP (**DHCP Server**) για υπολογιστές και συσκευές τοπικού δικτύου (LAN), γραμμένο σε **Python** με **SQLite Persistence**, **Ping Online Monitoring**, **Rogue Device Security Detection** και **Διαδραστικό Οπτικό Χάρτη Τοπολογίας (Topology Map)**.
+Ένα πλήρες, σύγχρονο σύστημα αυτόματης απόδοσης και διαχείρισης διευθύνσεων IP (**DHCP Server**) για υπολογιστές και συσκευές τοπικού δικτύου (LAN), γραμμένο σε **Python** με **SQLite Persistence**, **OUI Vendor Detection (Αναγνώριση Κατασκευαστή)**, **Ping Latency (ms)**, **Rogue Device Security Detection** και **Διαδραστικό Οπτικό Χάρτη Τοπολογίας (Topology Map)**.
 
 👉 **Δοκιμάστε το άμεσα Online (Live Demo):** **[https://karidasd.github.io/dhcp-network-manager/](https://karidasd.github.io/dhcp-network-manager/)**
 
@@ -34,7 +34,7 @@ py server.py
 # Ή σε Linux/macOS: python3 server.py
 ```
 
-> **Zero Dependencies:** Δεν χρειάζεται καμία εγκατάσταση με `pip`! Χρησιμοποιεί αποκλειστικά τη στάνταρ βιβλιοθήκη της Python (`http.server`, `socket`, `sqlite3`, `threading`).
+> **Zero Dependencies:** Δεν χρειάζεται καμία εξωτερική βιβλιοθήκη με `pip`! Χρησιμοποιεί αποκλειστικά τη στάνταρ βιβλιοθήκη της Python (`http.server`, `socket`, `sqlite3`, `threading`).
 
 ---
 
@@ -49,31 +49,35 @@ py server.py
 - Αυτόματος έλεγχος διαθεσιμότητας και αποφυγή διπλότυπων IP διευθύνσεων.
 - Παρακολούθηση διάρκειας μίσθωσης (Lease Duration) και αυτόματη λήξη/ανανέωση.
 
-### 3. 💾 Μόνιμη Αποθήκευση Δεδομένων (SQLite Persistence)
+### 3. 🏷️ OUI Vendor Detection (Αναγνώριση Κατασκευαστή)
+- Αυτόματη αναγνώριση του κατασκευαστή υλικού βάσει του MAC address prefix (Apple, Dell, Intel, HP, Samsung, Raspberry Pi, Cisco, Espressif IoT, TP-Link, Xiaomi κ.α.).
+
+### 4. 💾 Μόνιμη Αποθήκευση Δεδομένων (SQLite Persistence)
 - Όλες οι ενεργές μισθώσεις, οι στατικές κρατήσεις και οι ρυθμίσεις δικτύου αποθηκεύονται αυτόματα στην τοπική βάση **`dhcp_leases.db`**.
 - Ακόμα και αν κλείσει ο server, τα δεδομένα παραμένουν ασφαλή και ανακτώνται κατά την επανεκκίνηση.
 
-### 4. 🗺️ Διαδραστικός Οπτικός Χάρτης Δικτύου (Live Topology Map)
+### 5. 🗺️ Διαδραστικός Οπτικός Χάρτης Δικτύου (Live Topology Map)
 - Dynamic HTML5 Canvas rendering της τοπολογίας του τοπικού δικτύου.
 - Κεντρικός κόμβος (DHCP Gateway) συνδεδεμένος με όλες τις ενεργές συσκευές σε πραγματικό χρόνο.
-- Οπτική ένδειξη κατάστασης σύνδεσης και IP.
+- Οπτική ένδειξη κατάστασης σύνδεσης, IP και κατασκευαστή.
 
-### 5. 🟢 Ζωντανός Έλεγχος Συσκευών (Ping / Online Health Probe)
+### 6. 🟢 Ζωντανός Έλεγχος Συσκευών (Ping & Latency in ms)
 - Αυτόματο background scanning μέσω ICMP Ping.
-- Ένδειξη **Online (πράσινο)** / **Offline (γκρι)** για κάθε συνδεδεμένη συσκευή.
+- Ένδειξη **Online (πράσινο)** / **Offline (γκρι)** και μέτρηση καθυστέρησης (latency ms) για κάθε συνδεδεμένη συσκευή.
 
-### 6. 🛡️ Ασφάλεια & Ειδοποιήσεις (Rogue Device & Threshold Alerts)
+### 7. 🛡️ Ασφάλεια & Ειδοποιήσεις (Rogue Device & Webhook Alerts)
 - **Rogue Device Detection:** Εντοπίζει και ειδοποιεί άμεσα στο UI όταν μια άγνωστη MAC address εμφανιστεί στο δίκτυο.
+- **Discord / Webhook Alerts:** Δυνατότητα αποστολής αυτόματης ειδοποίησης σε κανάλι Discord/Slack/Telegram.
 - **Pool Exhaustion Warning:** Προειδοποίηση όταν η χρήση του εύρους IP ξεπεράσει το 85%.
 
-### 7. 📊 Εξαγωγή Αναφορών (Export CSV & JSON)
+### 8. 📊 Εξαγωγή & Επαναφορά Αναφορών (CSV & JSON Backup/Restore)
 - Άμεση εξαγωγή όλων των leases και των συσκευών σε αρχείο Excel/CSV (`/api/export/csv`).
-- Πλήρες JSON backup API (`/api/export/json`).
+- Πλήρες JSON backup και **Restore** με ένα κλικ.
 
-### 8. 🔒 Στατικές Δεσμεύσεις (Static Reservations / IP Binding)
+### 9. 🔒 Στατικές Δεσμεύσεις (Static Reservations / IP Binding)
 - Δέσμευση συγκεκριμένης IP για συγκεκριμένη MAC διεύθυνση (π.χ. Server, NAS, Εκτυπωτής).
 
-### 9. 📡 Πραγματικό Δίκτυο (UDP Port 67)
+### 10. 📡 Πραγματικό Δίκτυο (UDP Port 67)
 - Περιλαμβάνει UDP socket listener για πραγματικά broadcast πακέτα DHCP (RFC 2131) όταν εκτελείται με δικαιώματα διαχειριστή.
 
 ---

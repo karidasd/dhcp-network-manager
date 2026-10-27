@@ -4,15 +4,65 @@ import struct
 import threading
 import subprocess
 import platform
+import urllib.request
+import json
 from datetime import datetime, timedelta
 import ipaddress
 from db_manager import DHCPDatabase
 
+# Top Hardware Manufacturer OUIs
+OUI_DATABASE = {
+    "00:1A:2B": "Cisco",
+    "00:0C:29": "VMware",
+    "00:50:56": "VMware",
+    "00:1C:42": "Parallels",
+    "B8:27:EB": "Raspberry Pi",
+    "DC:A6:32": "Raspberry Pi",
+    "E4:5F:01": "Raspberry Pi",
+    "28:CD:C1": "Raspberry Pi",
+    "00:14:22": "Dell",
+    "18:66:DA": "Dell",
+    "00:1E:67": "Intel",
+    "34:17:EB": "Intel",
+    "00:25:B3": "Hewlett-Packard",
+    "3C:D9:2B": "Hewlett-Packard",
+    "F0:18:98": "Apple",
+    "AC:BC:32": "Apple",
+    "38:F9:D3": "Apple",
+    "A4:83:E7": "Apple",
+    "00:1A:8C": "Sophos",
+    "24:4B:FE": "Samsung",
+    "50:01:D9": "Samsung",
+    "84:F3:EB": "Espressif IoT",
+    "24:6F:28": "Espressif IoT",
+    "5C:CF:7F": "Espressif IoT",
+    "50:C7:BF": "TP-Link",
+    "14:EB:B6": "TP-Link",
+    "64:66:B3": "TP-Link",
+    "60:A4:4C": "Xiaomi",
+    "34:CE:00": "Xiaomi",
+    "00:15:5D": "Microsoft Hyper-V",
+    "F8:75:A4": "Sony",
+    "00:09:B0": "Onkyo",
+    "02:00:00": "Virtual Interface"
+}
+
+def lookup_vendor(mac: str) -> str:
+    clean_mac = mac.upper().replace("-", ":")
+    prefix = ":".join(clean_mac.split(":")[:3])
+    if prefix in OUI_DATABASE:
+        return OUI_DATABASE[prefix]
+    if clean_mac.startswith("02:"):
+        return "Simulated / Virtual"
+    return "Generic Device"
+
+
 class DHCPLease:
-    def __init__(self, ip: str, mac: str, hostname: str = "Unknown", duration_seconds: int = 86400, is_static: bool = False, issued_at: datetime = None, expires_at: datetime = None, state: str = "ACTIVE", is_online: bool = False):
+    def __init__(self, ip: str, mac: str, hostname: str = "Unknown", vendor: str = None, duration_seconds: int = 86400, is_static: bool = False, issued_at: datetime = None, expires_at: datetime = None, state: str = "ACTIVE", is_online: bool = False, latency_ms: int = -1):
         self.ip = ip
         self.mac = mac.upper()
         self.hostname = hostname or "Unknown"
+        self.vendor = vendor if vendor else lookup_vendor(self.mac)
         self.duration_seconds = duration_seconds
         self.is_static = is_static
         self.issued_at = issued_at if issued_at else datetime.now()
@@ -22,6 +72,7 @@ class DHCPLease:
             self.expires_at = datetime.max if is_static else self.issued_at + timedelta(seconds=duration_seconds)
         self.state = state
         self.is_online = is_online
+        self.latency_ms = latency_ms
         self.last_seen = datetime.now()
 
     def is_expired(self) -> bool:
@@ -34,12 +85,14 @@ class DHCPLease:
             "ip": self.ip,
             "mac": self.mac,
             "hostname": self.hostname,
+            "vendor": self.vendor,
             "issued_at": self.issued_at.strftime("%Y-%m-%d %H:%M:%S") if isinstance(self.issued_at, datetime) else str(self.issued_at),
             "expires_at": "Never (Static)" if self.is_static else (self.expires_at.strftime("%Y-%m-%d %H:%M:%S") if isinstance(self.expires_at, datetime) else str(self.expires_at)),
             "remaining_seconds": -1 if self.is_static else max(0, int((self.expires_at - datetime.now()).total_seconds())) if isinstance(self.expires_at, datetime) else 0,
             "is_static": bool(self.is_static),
             "state": "EXPIRED" if self.is_expired() else self.state,
             "is_online": bool(self.is_online),
+            "latency_ms": self.latency_ms,
             "last_seen": self.last_seen.strftime("%Y-%m-%d %H:%M:%S") if isinstance(self.last_seen, datetime) else str(self.last_seen)
         }
 
@@ -49,7 +102,6 @@ class DHCPEngine:
         self.lock = threading.Lock()
         self.db = DHCPDatabase()
         
-        # Default configuration
         default_config = {
             "network": "192.168.1.0/24",
             "start_ip": "192.168.1.100",
@@ -58,19 +110,17 @@ class DHCPEngine:
             "gateway": "192.168.1.1",
             "dns_servers": ["8.8.8.8", "1.1.1.1"],
             "domain_name": "lan.local",
-            "lease_duration_seconds": 3600
+            "lease_duration_seconds": 3600,
+            "webhook_url": ""
         }
 
-        # Load saved config from database
         saved_config = self.db.load_config()
         self.config = {**default_config, **saved_config}
         if not saved_config:
             self.db.save_config(self.config)
 
-        # Load reservations from database
         self.reservations = self.db.load_reservations()
         if not self.reservations:
-            # Seed default reservation
             self.reservations = {
                 "00:1A:2B:3C:4D:5E": {
                     "ip": "192.168.1.99",
@@ -80,7 +130,6 @@ class DHCPEngine:
             }
             self.db.save_reservation("00:1A:2B:3C:4D:5E", "192.168.1.99", "Server-NAS", "Static assignment for File Server")
 
-        # Load active leases from database
         self.leases = {}
         saved_leases = self.db.load_leases()
         for sl in saved_leases:
@@ -95,27 +144,26 @@ class DHCPEngine:
                 ip=sl["ip"],
                 mac=sl["mac"],
                 hostname=sl["hostname"],
+                vendor=sl.get("vendor"),
                 duration_seconds=sl["duration_seconds"],
                 is_static=bool(sl["is_static"]),
                 issued_at=iss,
                 expires_at=exp,
                 state=sl.get("state", "ACTIVE"),
-                is_online=bool(sl.get("is_online", False))
+                is_online=bool(sl.get("is_online", False)),
+                latency_ms=sl.get("latency_ms", -1)
             )
             if not lease.is_expired():
                 self.leases[lease.mac] = lease
 
-        # Activity logs & security alerts
         self.logs = []
         self.alerts = []
-        self._add_log("SYSTEM", "DHCP Engine & SQLite Database initialized successfully.")
+        self._add_log("SYSTEM", "DHCP Engine & SQLite Database initialized with OUI Vendor Lookup.")
 
-        # Real UDP Socket State
         self.real_socket_running = False
         self.real_socket_thread = None
         self.real_socket_error = None
 
-        # Network Health Ping Probe Thread
         self.ping_scanner_running = True
         self.ping_thread = threading.Thread(target=self._ping_scanner_loop, daemon=True)
         self.ping_thread.start()
@@ -123,7 +171,7 @@ class DHCPEngine:
     def _add_log(self, level: str, message: str, mac: str = None, ip: str = None):
         entry = {
             "timestamp": datetime.now().strftime("%H:%M:%S"),
-            "level": level,  # DISCOVER, OFFER, REQUEST, ACK, NAK, RELEASE, SYSTEM, WARNING, SECURITY_ALERT
+            "level": level,
             "message": message,
             "mac": mac,
             "ip": ip
@@ -132,7 +180,6 @@ class DHCPEngine:
         if len(self.logs) > 100:
             self.logs.pop()
         
-        # Save to DB
         try:
             self.db.add_log(level, message, mac, ip)
         except Exception:
@@ -141,7 +188,7 @@ class DHCPEngine:
     def add_alert(self, alert_type: str, title: str, description: str):
         alert = {
             "id": f"{int(time.time()*1000)}",
-            "type": alert_type,  # warning, danger, info
+            "type": alert_type,
             "title": title,
             "description": description,
             "timestamp": datetime.now().strftime("%H:%M:%S")
@@ -150,14 +197,29 @@ class DHCPEngine:
         if len(self.alerts) > 10:
             self.alerts.pop()
 
+        # Send Webhook alert if configured
+        if self.config.get("webhook_url"):
+            threading.Thread(target=self._send_webhook, args=(title, description), daemon=True).start()
+
+    def _send_webhook(self, title: str, description: str):
+        url = self.config.get("webhook_url")
+        if not url:
+            return
+        try:
+            payload = json.dumps({"content": f"**DHCP Server Alert**: {title}\n{description}"}).encode("utf-8")
+            req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json", "User-Agent": "DHCP-Server"})
+            urllib.request.urlopen(req, timeout=3)
+        except Exception:
+            pass
+
     def clear_alerts(self):
         with self.lock:
             self.alerts = []
 
     def update_config(self, new_config: dict):
         with self.lock:
-            for k in ["start_ip", "end_ip", "subnet_mask", "gateway", "domain_name"]:
-                if k in new_config and new_config[k]:
+            for k in ["start_ip", "end_ip", "subnet_mask", "gateway", "domain_name", "webhook_url"]:
+                if k in new_config:
                     self.config[k] = str(new_config[k]).strip()
             
             if "lease_duration_seconds" in new_config:
@@ -205,15 +267,12 @@ class DHCPEngine:
             return []
 
     def _find_available_ip(self, mac: str, preferred_ip: str = None) -> str:
-        # 1. Έλεγχος αν υπάρχει Static Reservation
         if mac in self.reservations:
             return self.reservations[mac]["ip"]
 
-        # 2. Έλεγχος αν η συσκευή είχε ήδη πρόσφατη ενεργή IP
         if mac in self.leases and not self.leases[mac].is_expired():
             return self.leases[mac].ip
 
-        # 3. Έλεγχος αν η προτιμώμενη IP είναι διαθέσιμη
         ip_pool = self._get_ip_range_list()
         reserved_ips = {r["ip"] for r in self.reservations.values()}
         active_leased_ips = {l.ip for l in self.leases.values() if not l.is_expired() and l.state == "ACTIVE"}
@@ -222,30 +281,28 @@ class DHCPEngine:
             if preferred_ip not in reserved_ips and preferred_ip not in active_leased_ips:
                 return preferred_ip
 
-        # 4. Βρες την πρώτη ελεύθερη IP από το pool
         for ip in ip_pool:
             if ip not in reserved_ips and ip not in active_leased_ips:
                 return ip
 
-        # Αν δεν υπάρχει διαθέσιμη, δες αν υπάρχει κάποιο ληγμένο lease
         for ip in ip_pool:
             if ip not in reserved_ips:
                 return ip
 
         return None
 
-    # --- DORA Process Implementation with Security & Persistence ---
+    # --- DORA Process Implementation ---
 
     def handle_discover(self, mac: str, hostname: str = "Client-PC", requested_ip: str = None) -> dict:
         mac = mac.upper().strip()
+        vendor = lookup_vendor(mac)
         with self.lock:
-            # Έλεγχος Rogue / Νέας Συσκευής
             if not self.db.is_known_device(mac):
-                self._add_log("SECURITY_ALERT", f"New/Unknown device connected: {mac} ({hostname})", mac=mac)
-                self.add_alert("warning", "🚨 Νέα Συσκευή στο Δίκτυο", f"Συνδέθηκε άγνωστη συσκευή με MAC: {mac} ({hostname})")
+                self._add_log("SECURITY_ALERT", f"New device connected: {mac} ({hostname}) [{vendor}]", mac=mac)
+                self.add_alert("warning", "🚨 Νέα Συσκευή στο Δίκτυο", f"Συνδέθηκε συσκευή: {mac} ({hostname}) - Κατασκευαστής: {vendor}")
                 self.db.register_device(mac, hostname)
             
-            self._add_log("DISCOVER", f"DHCPDISCOVER from {mac} ({hostname})", mac=mac)
+            self._add_log("DISCOVER", f"DHCPDISCOVER from {mac} ({hostname}) [{vendor}]", mac=mac)
             
             allocated_ip = self._find_available_ip(mac, requested_ip)
             if not allocated_ip:
@@ -258,6 +315,7 @@ class DHCPEngine:
                 "offered_ip": allocated_ip,
                 "mac": mac,
                 "hostname": hostname,
+                "vendor": vendor,
                 "subnet_mask": self.config["subnet_mask"],
                 "gateway": self.config["gateway"],
                 "dns_servers": self.config["dns_servers"],
@@ -270,6 +328,7 @@ class DHCPEngine:
 
     def handle_request(self, mac: str, hostname: str = "Client-PC", requested_ip: str = None) -> dict:
         mac = mac.upper().strip()
+        vendor = lookup_vendor(mac)
         with self.lock:
             self._add_log("REQUEST", f"DHCPREQUEST for IP {requested_ip} from {mac} ({hostname})", mac=mac, ip=requested_ip)
 
@@ -285,16 +344,16 @@ class DHCPEngine:
                 ip=final_ip,
                 mac=mac,
                 hostname=hostname,
+                vendor=vendor,
                 duration_seconds=self.config["lease_duration_seconds"],
                 is_static=is_static,
-                is_online=True
+                is_online=True,
+                latency_ms=1
             )
             self.leases[mac] = lease
             
-            # Persist to SQLite
             self.db.save_lease(lease.to_dict())
 
-            # Pool utilization check
             all_ips = self._get_ip_range_list()
             active_count = len([l for l in self.leases.values() if not l.is_expired() and l.state == "ACTIVE"])
             if len(all_ips) > 0 and (active_count / len(all_ips)) >= 0.85:
@@ -305,6 +364,7 @@ class DHCPEngine:
                 "assigned_ip": final_ip,
                 "mac": mac,
                 "hostname": hostname,
+                "vendor": vendor,
                 "subnet_mask": self.config["subnet_mask"],
                 "gateway": self.config["gateway"],
                 "dns_servers": self.config["dns_servers"],
@@ -312,7 +372,7 @@ class DHCPEngine:
                 "domain_name": self.config["domain_name"]
             }
 
-            self._add_log("ACK", f"DHCPACK IP {final_ip} confirmed & assigned to {mac} ({hostname})", mac=mac, ip=final_ip)
+            self._add_log("ACK", f"DHCPACK IP {final_ip} confirmed & assigned to {mac} ({hostname}) [{vendor}]", mac=mac, ip=final_ip)
             return {"status": "OK", "ack": ack_packet, "lease": lease.to_dict()}
 
     def handle_release(self, mac: str) -> dict:
@@ -330,52 +390,67 @@ class DHCPEngine:
     def revoke_lease(self, mac: str) -> dict:
         return self.handle_release(mac)
 
-    # --- Background Ping Scanner (Network Health & Online Detection) ---
-
     def _ping_scanner_loop(self):
-        """Περιοδικός έλεγχος Ping στις εκχωρημένες IPs για ανίχνευση Online/Offline κατάστασης"""
-        time.sleep(2)  # Αρχική καθυστέρηση
+        time.sleep(2)
         while self.ping_scanner_running:
             try:
                 with self.lock:
                     ips_to_check = [(l.ip, l.mac) for l in self.leases.values() if l.state == "ACTIVE"]
 
                 for ip, mac in ips_to_check:
-                    is_alive = self._ping_single_ip(ip)
+                    is_alive, latency = self._ping_single_ip(ip)
                     with self.lock:
                         if mac in self.leases:
                             self.leases[mac].is_online = is_alive
+                            self.leases[mac].latency_ms = latency
                             self.leases[mac].last_seen = datetime.now()
                             try:
-                                self.db.update_lease_online(ip, is_alive)
+                                self.db.update_lease_status(ip, is_alive, latency)
                             except Exception:
                                 pass
 
-            except Exception as e:
+            except Exception:
                 pass
             
-            # Έλεγχος κάθε 15 δευτερόλεπτα
             time.sleep(15)
 
-    def _ping_single_ip(self, ip: str) -> bool:
-        """Εκτελεί γρήγορο ICMP Ping με timeout 400ms"""
+    def _ping_single_ip(self, ip: str) -> tuple[bool, int]:
         try:
+            start_t = time.time()
             param = "-n" if platform.system().lower() == "windows" else "-c"
             timeout_param = "-w" if platform.system().lower() == "windows" else "-W"
-            timeout_val = "400" if platform.system().lower() == "windows" else "1"
+            timeout_val = "350" if platform.system().lower() == "windows" else "1"
             
             cmd = ["ping", param, "1", timeout_param, timeout_val, ip]
-            res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1.5)
-            return res.returncode == 0
+            res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1.0)
+            elapsed_ms = int((time.time() - start_t) * 1000)
+            return (res.returncode == 0, elapsed_ms if res.returncode == 0 else -1)
         except Exception:
-            return False
+            return (False, -1)
+
+    def import_backup(self, backup_data: dict) -> bool:
+        with self.lock:
+            if "config" in backup_data:
+                self.config = {**self.config, **backup_data["config"]}
+                self.db.save_config(self.config)
+            
+            if "reservations" in backup_data:
+                for r in backup_data["reservations"]:
+                    self.reservations[r["mac"]] = {
+                        "ip": r["ip"],
+                        "hostname": r.get("hostname", ""),
+                        "note": r.get("note", "")
+                    }
+                    self.db.save_reservation(r["mac"], r["ip"], r.get("hostname", ""), r.get("note", ""))
+
+            self._add_log("SYSTEM", "Backup data successfully restored into SQLite database.")
+            return True
 
     def get_status(self) -> dict:
         with self.lock:
             all_ips = self._get_ip_range_list()
             total_pool = len(all_ips)
             
-            # Ανανέωση κατάστασης expired
             for k, v in list(self.leases.items()):
                 if v.is_expired():
                     v.state = "EXPIRED"

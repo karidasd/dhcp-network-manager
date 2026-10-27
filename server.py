@@ -8,7 +8,8 @@ from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from dhcp_engine import DHCPEngine
 
 dhcp = DHCPEngine()
-WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+WEB_DIR = os.path.join(ROOT_DIR, "web") if os.path.exists(os.path.join(ROOT_DIR, "web", "index.html")) else ROOT_DIR
 
 class DHCPRequestHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -24,7 +25,7 @@ class DHCPRequestHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def _send_csv(self, filename: str, content: str):
-        body = content.encode('utf-8-sig')  # UTF-8 with BOM for Excel compatibility
+        body = content.encode('utf-8-sig')
         self.send_response(200)
         self.send_header("Content-Type", "text/csv; charset=utf-8")
         self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
@@ -49,31 +50,30 @@ class DHCPRequestHandler(SimpleHTTPRequestHandler):
             return
 
         elif path == "/api/export/json":
-            status_data = dhcp.get_status()
-            self._send_json(status_data)
+            self._send_json(dhcp.get_status())
             return
 
         elif path == "/api/export/csv":
-            # Generate CSV export of leases
             status_data = dhcp.get_status()
             output = io.StringIO()
             writer = csv.writer(output)
-            writer.writerow(["Hostname", "IP Address", "MAC Address", "Type", "Status", "Issued At", "Expires At"])
+            writer.writerow(["Hostname", "Vendor", "IP Address", "MAC Address", "Type", "Status", "Latency", "Issued At", "Expires At"])
             
             for l in status_data.get("leases", []):
                 writer.writerow([
                     l["hostname"],
+                    l.get("vendor", "Unknown"),
                     l["ip"],
                     l["mac"],
                     "Static" if l["is_static"] else "Dynamic",
                     "Online" if l.get("is_online") else "Offline",
+                    f"{l.get('latency_ms')}ms" if l.get('latency_ms', -1) >= 0 else "-",
                     l["issued_at"],
                     l["expires_at"]
                 ])
             self._send_csv("dhcp_leases_report.csv", output.getvalue())
             return
         
-        # Default index.html
         if path == "/" or path == "":
             self.path = "/index.html"
 
@@ -96,14 +96,12 @@ class DHCPRequestHandler(SimpleHTTPRequestHandler):
                 hostname = body.get("hostname", "PC-Simulated")
                 requested_ip = body.get("requested_ip")
 
-                # Step 1: Discover
                 discover_res = dhcp.handle_discover(mac, hostname, requested_ip)
                 if discover_res.get("status") != "OK":
                     self._send_json(discover_res, status_code=400)
                     return
 
                 offered_ip = discover_res["offer"]["offered_ip"]
-                # Step 2: Request the offered IP
                 ack_res = dhcp.handle_request(mac, hostname, offered_ip)
                 self._send_json({
                     "status": "OK",
@@ -155,6 +153,16 @@ class DHCPRequestHandler(SimpleHTTPRequestHandler):
             elif path == "/api/alerts/clear":
                 dhcp.clear_alerts()
                 self._send_json({"status": "OK", "message": "Alerts cleared"})
+                return
+
+            elif path == "/api/backup/import":
+                success = dhcp.import_backup(body)
+                self._send_json({"status": "OK", "message": "Backup imported successfully"})
+                return
+
+            elif path == "/api/webhook/test":
+                dhcp.add_alert("info", "🔔 Webhook Test", "Αυτό είναι ένα δοκιμαστικό μήνυμα ελέγχου σύνδεσης Webhook.")
+                self._send_json({"status": "OK", "message": "Test alert sent"})
                 return
 
             elif path == "/api/toggle-real-dhcp":

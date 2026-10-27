@@ -35,15 +35,25 @@ class DHCPDatabase:
                         mac TEXT PRIMARY KEY,
                         ip TEXT NOT NULL,
                         hostname TEXT NOT NULL,
+                        vendor TEXT DEFAULT 'Unknown',
                         issued_at TEXT NOT NULL,
                         expires_at TEXT NOT NULL,
                         duration_seconds INTEGER NOT NULL,
                         is_static INTEGER NOT NULL,
                         state TEXT NOT NULL,
                         is_online INTEGER DEFAULT 0,
+                        latency_ms INTEGER DEFAULT -1,
                         last_seen TEXT
                     )
                 """)
+
+                # Auto-migration for existing databases
+                cursor.execute("PRAGMA table_info(leases)")
+                columns = [row["name"] for row in cursor.fetchall()]
+                if "vendor" not in columns:
+                    cursor.execute("ALTER TABLE leases ADD COLUMN vendor TEXT DEFAULT 'Unknown'")
+                if "latency_ms" not in columns:
+                    cursor.execute("ALTER TABLE leases ADD COLUMN latency_ms INTEGER DEFAULT -1")
 
                 # Reservations table
                 cursor.execute("""
@@ -56,7 +66,7 @@ class DHCPDatabase:
                     )
                 """)
 
-                # Known Devices / Whitelist
+                # Known Devices
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS known_devices (
                         mac TEXT PRIMARY KEY,
@@ -100,10 +110,7 @@ class DHCPDatabase:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 for k, v in config.items():
-                    if isinstance(v, list):
-                        val_str = ",".join(v)
-                    else:
-                        val_str = str(v)
+                    val_str = ",".join(v) if isinstance(v, list) else str(v)
                     cursor.execute("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", (k, val_str))
                 conn.commit()
 
@@ -153,31 +160,33 @@ class DHCPDatabase:
                 cursor = conn.cursor()
                 cursor.execute("""
                     INSERT OR REPLACE INTO leases 
-                    (mac, ip, hostname, issued_at, expires_at, duration_seconds, is_static, state, is_online, last_seen)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (mac, ip, hostname, vendor, issued_at, expires_at, duration_seconds, is_static, state, is_online, latency_ms, last_seen)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     lease_dict["mac"],
                     lease_dict["ip"],
                     lease_dict["hostname"],
+                    lease_dict.get("vendor", "Unknown"),
                     lease_dict["issued_at"],
                     lease_dict["expires_at"],
                     lease_dict.get("duration_seconds", 3600),
                     1 if lease_dict.get("is_static") else 0,
                     lease_dict.get("state", "ACTIVE"),
                     1 if lease_dict.get("is_online") else 0,
+                    lease_dict.get("latency_ms", -1),
                     datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 ))
                 conn.commit()
 
-    def update_lease_online(self, ip: str, is_online: bool):
+    def update_lease_status(self, ip: str, is_online: bool, latency_ms: int):
         with self.lock:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     UPDATE leases 
-                    SET is_online = ?, last_seen = ?
+                    SET is_online = ?, latency_ms = ?, last_seen = ?
                     WHERE ip = ?
-                """, (1 if is_online else 0, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ip))
+                """, (1 if is_online else 0, latency_ms, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ip))
                 conn.commit()
 
     def delete_lease(self, mac: str):
